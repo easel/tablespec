@@ -1,0 +1,536 @@
+{
+  "name": "complete_validation_suite",
+  "meta": {
+    "great_expectations_version": "1.6.0",
+    "table_name": "test_table",
+    "generated_by": "gx_schema_validator",
+    "generation_date": "2025-01-29"
+  },
+  "expectations": [
+    {
+      "type": "expect_column_distinct_values_to_be_in_set",
+      "kwargs": {
+        "column": "test_col",
+        "value_set": [
+          "A",
+          "B",
+          "C"
+        ]
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_distinct_values_to_be_in_set",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_distinct_values_to_contain_set",
+      "kwargs": {
+        "column": "test_col",
+        "value_set": [
+          "A",
+          "B",
+          "C"
+        ]
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_distinct_values_to_contain_set",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_kl_divergence_to_be_less_than",
+      "kwargs": {
+        "column": "test_col",
+        "partition_object": {
+          "values": [
+            1,
+            2,
+            3
+          ],
+          "weights": [
+            0.3,
+            0.4,
+            0.3
+          ]
+        },
+        "threshold": 0.1
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_kl_divergence_to_be_less_than",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_max_to_be_between",
+      "kwargs": {
+        "column": "test_col",
+        "min_value": 0,
+        "max_value": 100
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_max_to_be_between",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_mean_to_be_between",
+      "kwargs": {
+        "column": "test_col",
+        "min_value": 0,
+        "max_value": 100
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_mean_to_be_between",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_median_to_be_between",
+      "kwargs": {
+        "column": "test_col",
+        "min_value": 0,
+        "max_value": 100
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_median_to_be_between",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_min_to_be_between",
+      "kwargs": {
+        "column": "test_col",
+        "min_value": 0,
+        "max_value": 100
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_min_to_be_between",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_most_common_value_to_be_in_set",
+      "kwargs": {
+        "column": "test_col",
+        "value_set": [
+          "A",
+          "B",
+          "C"
+        ]
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_most_common_value_to_be_in_set",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_pair_values_a_to_be_greater_than_b",
+      "kwargs": {
+        "column_A": "col_a",
+        "column_B": "col_b"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_pair_values_a_to_be_greater_than_b",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_pair_values_to_be_equal",
+      "kwargs": {
+        "column_A": "col_a",
+        "column_B": "col_b"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_pair_values_to_be_equal",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_proportion_of_non_null_values_to_be_between",
+      "kwargs": {
+        "column": "test_col",
+        "min_value": 0,
+        "max_value": 100
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_proportion_of_non_null_values_to_be_between",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_proportion_of_unique_values_to_be_between",
+      "kwargs": {
+        "column": "test_col",
+        "min_value": 0,
+        "max_value": 100
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_proportion_of_unique_values_to_be_between",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_stdev_to_be_between",
+      "kwargs": {
+        "column": "test_col",
+        "min_value": 0,
+        "max_value": 100
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_stdev_to_be_between",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_sum_to_be_between",
+      "kwargs": {
+        "column": "test_col",
+        "min_value": 0,
+        "max_value": 100
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_sum_to_be_between",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_to_exist",
+      "kwargs": {
+        "column": "test_col"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_to_exist",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_unique_value_count_to_be_between",
+      "kwargs": {
+        "column": "test_col",
+        "min_value": 0,
+        "max_value": 100
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_unique_value_count_to_be_between",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_value_lengths_to_be_between",
+      "kwargs": {
+        "column": "test_col",
+        "min_value": 0,
+        "max_value": 100
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_value_lengths_to_be_between",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_value_lengths_to_equal",
+      "kwargs": {
+        "column": "test_col",
+        "value": 10
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_value_lengths_to_equal",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "test_col",
+        "min_value": 0,
+        "max_value": 100
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_be_between",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_be_dateutil_parseable",
+      "kwargs": {
+        "column": "test_col"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_be_dateutil_parseable",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_be_decreasing",
+      "kwargs": {
+        "column": "test_col"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_be_decreasing",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "test_col",
+        "value_set": [
+          "A",
+          "B",
+          "C"
+        ]
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_be_in_set",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_be_in_type_list",
+      "kwargs": {
+        "column": "test_col",
+        "type_list": [
+          "INTEGER",
+          "STRING"
+        ]
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_be_in_type_list",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_be_increasing",
+      "kwargs": {
+        "column": "test_col"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_be_increasing",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_be_json_parseable",
+      "kwargs": {
+        "column": "test_col"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_be_json_parseable",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_be_null",
+      "kwargs": {
+        "column": "test_col"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_be_null",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "test_col",
+        "type_": "INTEGER"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_be_of_type",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_be_unique",
+      "kwargs": {
+        "column": "test_col"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_be_unique",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_match_json_schema",
+      "kwargs": {
+        "column": "test_col",
+        "json_schema": {
+          "type": "object"
+        }
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_match_json_schema",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "test_col",
+        "regex": "^[A-Z]+$"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_match_regex",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_match_regex_list",
+      "kwargs": {
+        "column": "test_col",
+        "regex_list": [
+          "^[A-Z]+$",
+          "^\\d+$"
+        ]
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_match_regex_list",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_match_strftime_format",
+      "kwargs": {
+        "column": "test_col",
+        "strftime_format": "%Y-%m-%d"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_match_strftime_format",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_not_be_in_set",
+      "kwargs": {
+        "column": "test_col",
+        "value_set": [
+          "A",
+          "B",
+          "C"
+        ]
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_not_be_in_set",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "test_col"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_not_be_null",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_not_match_regex",
+      "kwargs": {
+        "column": "test_col",
+        "regex": "^[A-Z]+$"
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_not_match_regex",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_column_values_to_not_match_regex_list",
+      "kwargs": {
+        "column": "test_col",
+        "regex_list": [
+          "^[A-Z]+$",
+          "^\\d+$"
+        ]
+      },
+      "meta": {
+        "description": "Test expectation for expect_column_values_to_not_match_regex_list",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_compound_columns_to_be_unique",
+      "kwargs": {
+        "column_list": [
+          "col1",
+          "col2"
+        ]
+      },
+      "meta": {
+        "description": "Test expectation for expect_compound_columns_to_be_unique",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_select_column_values_to_be_unique_within_record",
+      "kwargs": {
+        "column_list": [
+          "col1",
+          "col2"
+        ]
+      },
+      "meta": {
+        "description": "Test expectation for expect_select_column_values_to_be_unique_within_record",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_table_column_count_to_equal",
+      "kwargs": {
+        "value": 5
+      },
+      "meta": {
+        "description": "Test expectation for expect_table_column_count_to_equal",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_table_columns_to_match_ordered_list",
+      "kwargs": {
+        "column_list": [
+          "col1",
+          "col2"
+        ]
+      },
+      "meta": {
+        "description": "Test expectation for expect_table_columns_to_match_ordered_list",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "col1",
+          "col2"
+        ]
+      },
+      "meta": {
+        "description": "Test expectation for expect_table_columns_to_match_set",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_table_row_count_to_be_between",
+      "kwargs": {
+        "min_value": 0,
+        "max_value": 100
+      },
+      "meta": {
+        "description": "Test expectation for expect_table_row_count_to_be_between",
+        "severity": "warning"
+      }
+    },
+    {
+      "type": "expect_table_row_count_to_equal_other_table",
+      "kwargs": {
+        "other_table_name": "other_table"
+      },
+      "meta": {
+        "description": "Test expectation for expect_table_row_count_to_equal_other_table",
+        "severity": "warning"
+      }
+    }
+  ]
+}

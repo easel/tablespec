@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://synaptiq.ai/schemas/gx-expectation-categories/1.0",
+  "title": "Great Expectations Categorization",
+  "description": "Categorizes GX expectation types by generation source: baseline (deterministic from UMF), LLM-generatable (require reasoning), or pending (fallback for unmappable rules)",
+
+  "baseline_only": {
+    "description": "Expectations generated deterministically by BaselineExpectationGenerator from UMF metadata. LLMs should NEVER generate these.",
+    "expectations": [
+      "expect_column_to_exist",
+      "expect_column_values_to_be_of_type",
+      "expect_column_values_to_not_be_null",
+      "expect_column_value_lengths_to_be_between",
+      "expect_column_values_to_match_strftime_format",
+      "expect_table_column_count_to_equal",
+      "expect_table_columns_to_match_ordered_list"
+    ]
+  },
+
+  "llm_table_level": {
+    "description": "Table-level expectations requiring LLM reasoning: multi-column constraints, cross-column comparisons, structural rules",
+    "expectations": [
+      "expect_compound_columns_to_be_unique",
+      "expect_column_pair_values_a_to_be_greater_than_b",
+      "expect_column_pair_values_to_be_equal",
+      "expect_table_columns_to_match_set",
+      "expect_table_row_count_to_be_between",
+      "expect_table_row_count_to_equal_other_table",
+      "expect_select_column_values_to_be_unique_within_record"
+    ]
+  },
+
+  "llm_column_level": {
+    "description": "Column-specific expectations requiring LLM reasoning: value sets, patterns, ranges, conditional logic",
+    "expectations": [
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_match_regex",
+      "expect_column_values_to_match_regex_list",
+      "expect_column_values_to_be_unique",
+      "expect_column_values_to_be_between",
+      "expect_column_distinct_values_to_be_in_set",
+      "expect_column_distinct_values_to_contain_set",
+      "expect_column_most_common_value_to_be_in_set",
+      "expect_column_values_to_not_be_in_set",
+      "expect_column_values_to_not_match_regex",
+      "expect_column_values_to_not_match_regex_list",
+      "expect_column_value_lengths_to_equal",
+      "expect_column_values_to_be_increasing",
+      "expect_column_values_to_be_decreasing",
+      "expect_column_values_to_be_json_parseable",
+      "expect_column_values_to_match_json_schema",
+      "expect_column_values_to_be_null"
+    ]
+  },
+
+  "statistical_profiling": {
+    "description": "Statistical expectations typically generated from profiling data, not LLM reasoning. Generally not used in validation prompts.",
+    "expectations": [
+      "expect_column_min_to_be_between",
+      "expect_column_max_to_be_between",
+      "expect_column_mean_to_be_between",
+      "expect_column_median_to_be_between",
+      "expect_column_stdev_to_be_between",
+      "expect_column_sum_to_be_between",
+      "expect_column_kl_divergence_to_be_less_than",
+      "expect_column_proportion_of_non_null_values_to_be_between",
+      "expect_column_proportion_of_unique_values_to_be_between",
+      "expect_column_unique_value_count_to_be_between"
+    ]
+  },
+
+  "advanced_types": {
+    "description": "Advanced expectations that may be used in specialized contexts",
+    "expectations": [
+      "expect_column_values_to_be_dateutil_parseable",
+      "expect_column_values_to_be_in_type_list"
+    ]
+  },
+
+  "pending_fallback": {
+    "description": "Fallback expectation for rules that cannot be mapped to standard GX expectations (checksums, external lookups, complex algorithms)",
+    "expectations": [
+      "expect_validation_rule_pending_implementation"
+    ]
+  }
+}

@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tablespec"
+dynamic = ["version"]
+description = "Python library for working with table schemas in Universal Metadata Format (UMF)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Erik LaBianca", email = "erik.labianca@gmail.com"},
+]
+keywords = ["schema", "metadata", "umf", "data-quality", "great-expectations", "pyspark"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0.0",
+    "great-expectations>=0.18.0",
+]
+
+[project.optional-dependencies]
+spark = [
+    "pyspark>=3.5.0",
+]
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+fallback-version = "0.0.0"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-cov>=6.0.0",
+    "anyio>=4.0.0",
+    "pytest-mock>=3.15.1",
+    "ruff>=0.13.3",
+    "pyright>=1.1.0",
+    "pre-commit>=4.0.0",
+]
+
+[tool.uv]
+package = true

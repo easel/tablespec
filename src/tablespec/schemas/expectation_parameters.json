@@ -1,0 +1,767 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://synaptiq.ai/schemas/gx-expectation-parameters/1.0",
+  "title": "Great Expectations Parameter Requirements",
+  "description": "Documents required and optional kwargs for each LLM-generatable GX expectation type",
+
+  "table_level_expectations": {
+    "expect_compound_columns_to_be_unique": {
+      "required_kwargs": ["column_list"],
+      "optional_kwargs": ["ignore_row_if", "mostly"],
+      "parameter_details": {
+        "column_list": {
+          "type": "array of strings",
+          "description": "List of columns that form compound unique key",
+          "min_items": 2
+        }
+      },
+      "example": {
+        "type": "expect_compound_columns_to_be_unique",
+        "kwargs": {
+          "column_list": ["MemberId", "OutreachDate"]
+        },
+        "meta": {
+          "description": "Each member can have only one outreach per date",
+          "severity": "critical"
+        }
+      },
+      "notes": "Use this expectation for multi-column composite keys"
+    },
+
+    "expect_column_pair_values_a_to_be_greater_than_b": {
+      "required_kwargs": ["column_A", "column_B"],
+      "optional_kwargs": ["or_equal", "ignore_row_if", "parse_strings_as_datetimes", "mostly"],
+      "parameter_details": {
+        "column_A": {
+          "type": "string",
+          "description": "Name of first column (should be greater)"
+        },
+        "column_B": {
+          "type": "string",
+          "description": "Name of second column (should be lesser)"
+        },
+        "or_equal": {
+          "type": "boolean",
+          "description": "If true, allows A >= B instead of A > B",
+          "default": false,
+          "important": "Use 'or_equal' NOT 'or_equal_to' (common mistake)"
+        },
+        "parse_strings_as_datetimes": {
+          "type": "boolean",
+          "description": "For date strings (e.g., YYYYMMDD), set to false for lexical comparison",
+          "default": false
+        }
+      },
+      "example": {
+        "type": "expect_column_pair_values_a_to_be_greater_than_b",
+        "kwargs": {
+          "column_A": "EndDate",
+          "column_B": "StartDate",
+          "or_equal": true
+        },
+        "meta": {
+          "description": "EndDate must be greater than or equal to StartDate",
+          "severity": "critical"
+        }
+      },
+      "common_mistakes": [
+        "Using 'or_equal_to' instead of 'or_equal'",
+        "Setting parse_strings_as_datetimes=true for YYYYMMDD strings (lexical comparison works)"
+      ]
+    },
+
+    "expect_column_pair_values_to_be_equal": {
+      "required_kwargs": ["column_A", "column_B"],
+      "optional_kwargs": ["ignore_row_if", "mostly"],
+      "parameter_details": {
+        "column_A": {
+          "type": "string",
+          "description": "First column name"
+        },
+        "column_B": {
+          "type": "string",
+          "description": "Second column name (should equal first)"
+        }
+      },
+      "example": {
+        "type": "expect_column_pair_values_to_be_equal",
+        "kwargs": {
+          "column_A": "PrimaryCareProviderNPI",
+          "column_B": "PCPNPI"
+        },
+        "meta": {
+          "description": "PrimaryCareProviderNPI and PCPNPI must be equal (redundant fields)",
+          "severity": "warning"
+        }
+      }
+    },
+
+    "expect_table_columns_to_match_set": {
+      "required_kwargs": ["column_set"],
+      "optional_kwargs": ["exact_match"],
+      "parameter_details": {
+        "column_set": {
+          "type": "array of strings",
+          "description": "Unordered set of expected column names"
+        },
+        "exact_match": {
+          "type": "boolean",
+          "description": "If true, table must have exactly these columns (no more, no less)",
+          "default": true
+        }
+      },
+      "example": {
+        "type": "expect_table_columns_to_match_set",
+        "kwargs": {
+          "column_set": ["MemberId", "FirstName", "LastName", "DOB"]
+        },
+        "meta": {
+          "description": "Table must contain member identification columns",
+          "severity": "critical"
+        }
+      }
+    },
+
+    "expect_table_row_count_to_be_between": {
+      "required_kwargs": [],
+      "optional_kwargs": ["min_value", "max_value"],
+      "parameter_details": {
+        "min_value": {
+          "type": "integer",
+          "description": "Minimum expected row count (null = no minimum)"
+        },
+        "max_value": {
+          "type": "integer",
+          "description": "Maximum expected row count (null = no maximum)"
+        }
+      },
+      "example": {
+        "type": "expect_table_row_count_to_be_between",
+        "kwargs": {
+          "min_value": 1,
+          "max_value": null
+        },
+        "meta": {
+          "description": "Table must not be empty (at least 1 row)",
+          "severity": "critical"
+        }
+      },
+      "notes": "At least one of min_value or max_value should be set"
+    },
+
+    "expect_table_row_count_to_equal_other_table": {
+      "required_kwargs": ["other_table_name"],
+      "optional_kwargs": [],
+      "parameter_details": {
+        "other_table_name": {
+          "type": "string",
+          "description": "Name of the other table to compare row counts with"
+        }
+      },
+      "example": {
+        "type": "expect_table_row_count_to_equal_other_table",
+        "kwargs": {
+          "other_table_name": "OutreachList"
+        },
+        "meta": {
+          "description": "OptoutList must have same row count as OutreachList",
+          "severity": "warning"
+        }
+      },
+      "notes": "Rarely used; typically for 1:1 relationship validation"
+    },
+
+    "expect_select_column_values_to_be_unique_within_record": {
+      "required_kwargs": ["column_list"],
+      "optional_kwargs": ["ignore_row_if", "mostly"],
+      "parameter_details": {
+        "column_list": {
+          "type": "array of strings",
+          "description": "Columns that should have unique values within each row"
+        }
+      },
+      "example": {
+        "type": "expect_select_column_values_to_be_unique_within_record",
+        "kwargs": {
+          "column_list": ["Phone1", "Phone2", "Phone3"]
+        },
+        "meta": {
+          "description": "Phone numbers within a record must be unique (no duplicates)",
+          "severity": "warning"
+        }
+      }
+    }
+  },
+
+  "column_level_expectations": {
+    "expect_column_values_to_be_in_set": {
+      "required_kwargs": ["column", "value_set"],
+      "optional_kwargs": ["mostly", "parse_strings_as_datetimes"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "value_set": {
+          "type": "array",
+          "description": "List of allowed values (enumerated set)",
+          "min_items": 1,
+          "example": ["MD", "ME", "MP", "DUALS"]
+        },
+        "mostly": {
+          "type": "number",
+          "description": "Fraction of values that must be in set (0.0-1.0)",
+          "default": 1.0
+        }
+      },
+      "example": {
+        "type": "expect_column_values_to_be_in_set",
+        "kwargs": {
+          "column": "LOB",
+          "value_set": ["MD", "ME", "MP"]
+        },
+        "meta": {
+          "description": "LOB must be one of: Medicaid (MD), Medicare (ME), or Marketplace (MP)",
+          "severity": "critical"
+        }
+      },
+      "common_mistakes": [
+        "Empty value_set array",
+        "Including column headers in value_set"
+      ]
+    },
+
+    "expect_column_values_to_match_regex": {
+      "required_kwargs": ["column", "regex"],
+      "optional_kwargs": ["mostly"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "regex": {
+          "type": "string",
+          "description": "Regular expression pattern (Python re module syntax)",
+          "example": "^[A-Z]{2}\\d{11}$"
+        }
+      },
+      "example": {
+        "type": "expect_column_values_to_match_regex",
+        "kwargs": {
+          "column": "ClientMemberId",
+          "regex": "^[A-Z]{2}\\d{11}$"
+        },
+        "meta": {
+          "description": "ClientMemberId must be 2 uppercase letters + 11 digits (e.g., AL12345678901)",
+          "severity": "critical"
+        }
+      },
+      "common_mistakes": [
+        "Forgetting to escape backslashes in JSON (use \\\\ for \\d)",
+        "Not anchoring pattern with ^ and $"
+      ]
+    },
+
+    "expect_column_values_to_match_regex_list": {
+      "required_kwargs": ["column", "regex_list"],
+      "optional_kwargs": ["match_on", "mostly"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "regex_list": {
+          "type": "array of strings",
+          "description": "List of regex patterns (value must match at least one)",
+          "min_items": 1
+        },
+        "match_on": {
+          "type": "string",
+          "enum": ["any", "all"],
+          "description": "Whether to match any pattern or all patterns",
+          "default": "any"
+        }
+      },
+      "example": {
+        "type": "expect_column_values_to_match_regex_list",
+        "kwargs": {
+          "column": "Phone",
+          "regex_list": ["^\\d{10}$", "^\\d{3}-\\d{3}-\\d{4}$"]
+        },
+        "meta": {
+          "description": "Phone must be either 10 digits or formatted as XXX-XXX-XXXX",
+          "severity": "warning"
+        }
+      }
+    },
+
+    "expect_column_values_to_be_unique": {
+      "required_kwargs": ["column"],
+      "optional_kwargs": ["mostly"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name (values must be unique)"
+        }
+      },
+      "example": {
+        "type": "expect_column_values_to_be_unique",
+        "kwargs": {
+          "column": "ClientMemberId"
+        },
+        "meta": {
+          "description": "ClientMemberId must be unique (primary key)",
+          "severity": "critical"
+        }
+      },
+      "notes": "For multi-column uniqueness, use expect_multicolumn_values_to_be_unique"
+    },
+
+    "expect_column_values_to_be_between": {
+      "required_kwargs": ["column"],
+      "optional_kwargs": ["min_value", "max_value", "strict_min", "strict_max", "mostly", "parse_strings_as_datetimes"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "min_value": {
+          "type": "number or null",
+          "description": "Minimum value (inclusive unless strict_min=true)"
+        },
+        "max_value": {
+          "type": "number or null",
+          "description": "Maximum value (inclusive unless strict_max=true)"
+        },
+        "strict_min": {
+          "type": "boolean",
+          "description": "If true, min_value is exclusive (>)",
+          "default": false
+        },
+        "strict_max": {
+          "type": "boolean",
+          "description": "If true, max_value is exclusive (<)",
+          "default": false
+        }
+      },
+      "example": {
+        "type": "expect_column_values_to_be_between",
+        "kwargs": {
+          "column": "Age",
+          "min_value": 0,
+          "max_value": 120
+        },
+        "meta": {
+          "description": "Age must be between 0 and 120 years",
+          "severity": "critical"
+        }
+      },
+      "notes": "At least one of min_value or max_value should be set"
+    },
+
+    "expect_column_distinct_values_to_be_in_set": {
+      "required_kwargs": ["column", "value_set"],
+      "optional_kwargs": [],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "value_set": {
+          "type": "array",
+          "description": "Set of allowed distinct values"
+        }
+      },
+      "example": {
+        "type": "expect_column_distinct_values_to_be_in_set",
+        "kwargs": {
+          "column": "Status",
+          "value_set": ["Active", "Inactive", "Pending"]
+        },
+        "meta": {
+          "description": "Status field can only have these distinct values: Active, Inactive, Pending",
+          "severity": "critical"
+        }
+      },
+      "notes": "Similar to expect_column_values_to_be_in_set but checks distinct values (cardinality)"
+    },
+
+    "expect_column_distinct_values_to_contain_set": {
+      "required_kwargs": ["column", "value_set"],
+      "optional_kwargs": [],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "value_set": {
+          "type": "array",
+          "description": "Set of values that must all appear in the column"
+        }
+      },
+      "example": {
+        "type": "expect_column_distinct_values_to_contain_set",
+        "kwargs": {
+          "column": "LOB",
+          "value_set": ["MD", "ME"]
+        },
+        "meta": {
+          "description": "LOB column must contain at least MD and ME values",
+          "severity": "warning"
+        }
+      },
+      "notes": "Ensures required values are present; allows additional values"
+    },
+
+    "expect_column_most_common_value_to_be_in_set": {
+      "required_kwargs": ["column", "value_set"],
+      "optional_kwargs": ["ties_okay"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "value_set": {
+          "type": "array",
+          "description": "Set of acceptable most common values"
+        },
+        "ties_okay": {
+          "type": "boolean",
+          "description": "If true, allows ties for most common value",
+          "default": true
+        }
+      },
+      "example": {
+        "type": "expect_column_most_common_value_to_be_in_set",
+        "kwargs": {
+          "column": "PreferredLanguage",
+          "value_set": ["English", "Spanish"]
+        },
+        "meta": {
+          "description": "Most common language should be English or Spanish",
+          "severity": "info"
+        }
+      },
+      "notes": "Statistical expectation; use sparingly in validation prompts"
+    },
+
+    "expect_column_values_to_not_be_in_set": {
+      "required_kwargs": ["column", "value_set"],
+      "optional_kwargs": ["mostly"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "value_set": {
+          "type": "array",
+          "description": "List of forbidden values"
+        }
+      },
+      "example": {
+        "type": "expect_column_values_to_not_be_in_set",
+        "kwargs": {
+          "column": "Status",
+          "value_set": ["DELETED", "ARCHIVED"]
+        },
+        "meta": {
+          "description": "Status must not be DELETED or ARCHIVED in active table",
+          "severity": "critical"
+        }
+      }
+    },
+
+    "expect_column_values_to_not_match_regex": {
+      "required_kwargs": ["column", "regex"],
+      "optional_kwargs": ["mostly"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "regex": {
+          "type": "string",
+          "description": "Pattern that values must NOT match"
+        }
+      },
+      "example": {
+        "type": "expect_column_values_to_not_match_regex",
+        "kwargs": {
+          "column": "MemberId",
+          "regex": "^TEST.*"
+        },
+        "meta": {
+          "description": "MemberId must not start with TEST (no test data)",
+          "severity": "critical"
+        }
+      }
+    },
+
+    "expect_column_values_to_not_match_regex_list": {
+      "required_kwargs": ["column", "regex_list"],
+      "optional_kwargs": ["mostly"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "regex_list": {
+          "type": "array of strings",
+          "description": "List of forbidden patterns"
+        }
+      },
+      "example": {
+        "type": "expect_column_values_to_not_match_regex_list",
+        "kwargs": {
+          "column": "Email",
+          "regex_list": [".*@test\\.com$", ".*@example\\.com$"]
+        },
+        "meta": {
+          "description": "Email must not be from test.com or example.com domains",
+          "severity": "warning"
+        }
+      }
+    },
+
+    "expect_column_value_lengths_to_equal": {
+      "required_kwargs": ["column", "value"],
+      "optional_kwargs": ["mostly"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "value": {
+          "type": "integer",
+          "description": "Expected exact length"
+        }
+      },
+      "example": {
+        "type": "expect_column_value_lengths_to_equal",
+        "kwargs": {
+          "column": "StateCode",
+          "value": 2
+        },
+        "meta": {
+          "description": "StateCode must be exactly 2 characters (e.g., CA, TX)",
+          "severity": "critical"
+        }
+      }
+    },
+
+    "expect_column_values_to_be_increasing": {
+      "required_kwargs": ["column"],
+      "optional_kwargs": ["strictly", "parse_strings_as_datetimes", "mostly"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "strictly": {
+          "type": "boolean",
+          "description": "If true, requires strictly increasing (no equal consecutive values)",
+          "default": false
+        }
+      },
+      "example": {
+        "type": "expect_column_values_to_be_increasing",
+        "kwargs": {
+          "column": "Timestamp",
+          "strictly": true
+        },
+        "meta": {
+          "description": "Timestamp must be strictly increasing (sorted chronologically)",
+          "severity": "warning"
+        }
+      }
+    },
+
+    "expect_column_values_to_be_decreasing": {
+      "required_kwargs": ["column"],
+      "optional_kwargs": ["strictly", "parse_strings_as_datetimes", "mostly"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "strictly": {
+          "type": "boolean",
+          "description": "If true, requires strictly decreasing",
+          "default": false
+        }
+      },
+      "example": {
+        "type": "expect_column_values_to_be_decreasing",
+        "kwargs": {
+          "column": "Priority",
+          "strictly": false
+        },
+        "meta": {
+          "description": "Priority should be in descending order",
+          "severity": "info"
+        }
+      }
+    },
+
+    "expect_column_values_to_be_json_parseable": {
+      "required_kwargs": ["column"],
+      "optional_kwargs": ["mostly"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name (should contain JSON strings)"
+        }
+      },
+      "example": {
+        "type": "expect_column_values_to_be_json_parseable",
+        "kwargs": {
+          "column": "Metadata"
+        },
+        "meta": {
+          "description": "Metadata column must contain valid JSON",
+          "severity": "warning"
+        }
+      }
+    },
+
+    "expect_column_values_to_match_json_schema": {
+      "required_kwargs": ["column", "json_schema"],
+      "optional_kwargs": ["mostly"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name"
+        },
+        "json_schema": {
+          "type": "object",
+          "description": "JSON Schema specification for validation"
+        }
+      },
+      "example": {
+        "type": "expect_column_values_to_match_json_schema",
+        "kwargs": {
+          "column": "Address",
+          "json_schema": {
+            "type": "object",
+            "properties": {
+              "street": {"type": "string"},
+              "city": {"type": "string"},
+              "zip": {"type": "string"}
+            },
+            "required": ["street", "city", "zip"]
+          }
+        },
+        "meta": {
+          "description": "Address JSON must contain required fields: street, city, zip",
+          "severity": "critical"
+        }
+      },
+      "notes": "Advanced expectation for structured JSON columns"
+    },
+
+    "expect_column_values_to_be_null": {
+      "required_kwargs": ["column"],
+      "optional_kwargs": ["mostly"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name (all values should be null)"
+        }
+      },
+      "example": {
+        "type": "expect_column_values_to_be_null",
+        "kwargs": {
+          "column": "LegacyField"
+        },
+        "meta": {
+          "description": "LegacyField is deprecated and should always be null",
+          "severity": "info"
+        }
+      },
+      "notes": "Rare use case; typically for deprecated columns"
+    }
+  },
+
+  "pending_fallback": {
+    "expect_validation_rule_pending_implementation": {
+      "required_kwargs": [],
+      "optional_kwargs": ["column", "column_list", "constraint_type"],
+      "parameter_details": {
+        "column": {
+          "type": "string",
+          "description": "Column name if rule applies to single column"
+        },
+        "column_list": {
+          "type": "array of strings",
+          "description": "List of columns if rule applies to multiple columns"
+        },
+        "constraint_type": {
+          "type": "string",
+          "description": "Type of constraint (e.g., 'checksum', 'lookup', 'algorithm')"
+        }
+      },
+      "required_meta_fields": {
+        "description": {
+          "type": "string",
+          "description": "COMPREHENSIVE description of what needs to be validated and why",
+          "required": true
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warning"],
+          "description": "Severity (use 'info' or 'warning', not 'critical')",
+          "required": true
+        },
+        "reason_unmappable": {
+          "type": "string",
+          "description": "Why this cannot be mapped to standard GX expectation",
+          "required": false,
+          "recommended": true
+        },
+        "suggested_implementation": {
+          "type": "string",
+          "description": "How this could be implemented (e.g., custom expectation, UDF)",
+          "required": false,
+          "recommended": true
+        }
+      },
+      "example": {
+        "type": "expect_validation_rule_pending_implementation",
+        "kwargs": {
+          "column": "NPI",
+          "constraint_type": "checksum"
+        },
+        "meta": {
+          "description": "National Provider Identifier (NPI) must pass Luhn checksum validation algorithm per CMS guidelines. Field is 10 numeric digits where last digit is check digit computed using Luhn algorithm.",
+          "severity": "info",
+          "reason_unmappable": "Requires Luhn checksum algorithm not available in standard GX",
+          "suggested_implementation": "Create custom expectation: expect_column_values_to_be_valid_npi using Spark UDF to validate check digit"
+        }
+      },
+      "when_to_use": [
+        "Checksum validation (Luhn, mod10, mod11)",
+        "External data lookups (master tables, reference data)",
+        "Complex algorithms (domain-specific calculations)",
+        "Business logic spanning 3+ fields with complex conditionals",
+        "Validation requiring data from multiple tables"
+      ]
+    }
+  },
+
+  "common_optional_kwargs": {
+    "description": "These optional kwargs can be used with most expectations",
+    "mostly": {
+      "type": "number",
+      "range": "0.0 to 1.0",
+      "default": 1.0,
+      "description": "Fraction of values that must meet expectation (e.g., 0.95 = 95%)",
+      "example": "Use mostly: 0.99 when allowing <1% exceptions"
+    },
+    "ignore_row_if": {
+      "type": "string",
+      "enum": ["both_values_are_missing", "either_value_is_missing", "neither"],
+      "description": "Condition for ignoring rows in multi-column comparisons",
+      "applies_to": ["column_pair expectations", "multicolumn expectations"]
+    }
+  }
+}
