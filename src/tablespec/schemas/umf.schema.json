@@ -1,0 +1,255 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://synaptiq.ai/schemas/umf/1.0",
+  "title": "Universal Metadata Format (UMF) Schema",
+  "description": "Schema for UMF YAML files that define healthcare table metadata",
+  "type": "object",
+  "required": ["version", "table_name", "columns"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$",
+      "description": "UMF format version"
+    },
+    "table_name": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Database table name"
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Original source file name"
+    },
+    "sheet_name": {
+      "type": "string",
+      "description": "Excel sheet name if applicable"
+    },
+    "table_type": {
+      "type": "string",
+      "enum": ["provided", "generated", "lookup"],
+      "description": "Table type: provided (source data), generated (needs survivorship), lookup (reference table)"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable table description"
+    },
+    "columns": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Array of column definitions",
+      "items": {
+        "type": "object",
+        "required": ["name", "data_type"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Column name"
+          },
+          "data_type": {
+            "type": "string",
+            "enum": ["STRING", "DECIMAL", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "DATE", "TIMESTAMP", "BOOLEAN", "FLOAT", "DOUBLE"],
+            "description": "Column data type"
+          },
+          "position": {
+            "type": "string",
+            "description": "Excel column position or identifier"
+          },
+          "description": {
+            "type": "string",
+            "description": "Column description"
+          },
+          "nullable": {
+            "type": "object",
+            "description": "Nullability by line of business",
+            "properties": {
+              "MD": {
+                "type": "boolean",
+                "description": "Nullable for Medicaid"
+              },
+              "MP": {
+                "type": "boolean",
+                "description": "Nullable for Medicare Part D"
+              },
+              "ME": {
+                "type": "boolean",
+                "description": "Nullable for Medicare"
+              }
+            },
+            "additionalProperties": false
+          },
+          "sample_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Sample values for the column"
+          },
+          "length": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum length for VARCHAR columns"
+          },
+          "precision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Precision for DECIMAL columns"
+          },
+          "scale": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Scale for DECIMAL columns"
+          },
+          "title": {
+            "type": "string",
+            "description": "Column title or display name"
+          },
+          "format": {
+            "type": "string",
+            "description": "Data format specification or pattern"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Additional notes or comments about the column"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Alternative names or identifiers for the column"
+          },
+          "is_primary_key": {
+            "type": "boolean",
+            "description": "Whether this column is a primary key (for lookup tables)"
+          },
+          "original_name": {
+            "type": "string",
+            "description": "Original column name from source data"
+          },
+          "reporting_requirement": {
+            "type": "string",
+            "enum": ["R", "O", "S"],
+            "description": "Reporting requirement: R=Required, O=Optional, S=Suggested"
+          },
+          "derivation": {
+            "type": "object",
+            "description": "Derivation metadata for columns in generated tables",
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "description": "Source columns this field can be derived from",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "table": {"type": "string"},
+                    "column": {"type": "string"},
+                    "priority": {"type": "integer", "minimum": 1}
+                  },
+                  "required": ["table", "column", "priority"]
+                }
+              }
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "relationships": {
+      "type": "object",
+      "description": "Table relationships added by Phase 4",
+      "properties": {
+        "foreign_keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "column": {"type": "string"},
+              "references_table": {"type": "string"},
+              "references_column": {"type": "string"},
+              "references": {
+                "type": "string",
+                "description": "Legacy format: table.column"
+              },
+              "detection_method": {
+                "type": "string",
+                "description": "Method used to detect relationship"
+              },
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+            },
+            "anyOf": [
+              {"required": ["column", "references_table", "references_column"]},
+              {"required": ["column", "references"]}
+            ]
+          }
+        },
+        "referenced_by": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["table", "column", "foreign_key_column"],
+            "properties": {
+              "table": {"type": "string"},
+              "column": {"type": "string"},
+              "foreign_key_column": {"type": "string"},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+            }
+          }
+        }
+      }
+    },
+    "derivations": {
+      "type": "object",
+      "description": "Derivation metadata for generated tables that merge data from multiple sources",
+      "properties": {
+        "data_quality": {
+          "type": "object",
+          "description": "Data quality rules and requirements for the generated table"
+        },
+        "mappings": {
+          "type": "object",
+          "description": "Field-level mappings from source tables with survivorship strategies"
+        }
+      }
+    },
+    "config_data": {
+      "type": "object",
+      "description": "Configuration data for configuration files"
+    },
+    "lookup_metadata": {
+      "type": "object",
+      "description": "Metadata specific to lookup tables"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional metadata",
+      "properties": {
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "created_by": {
+          "type": "string"
+        },
+        "pipeline_phase": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7
+        },
+        "source_file_modified": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
