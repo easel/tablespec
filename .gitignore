@@ -215,3 +215,6 @@ __marimo__/
 .dolt/
 *.db
 coverage.json
+
+# Beads credentials
+.beads/.beads-credential-key
