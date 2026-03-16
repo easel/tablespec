@@ -3,7 +3,7 @@
 from typing import Any
 
 
-def _generate_documentation_prompt(umf_data: dict[str, Any]) -> str:
+def generate_documentation_prompt(umf_data: dict[str, Any]) -> str:
     """Generate documentation prompt for a specific table."""
     table_name = umf_data["table_name"]
 
@@ -61,3 +61,7 @@ Please provide your analysis in a structured format suitable for technical docum
 """
 
     return prompt
+
+
+# Deprecated alias - use the public name above instead
+_generate_documentation_prompt = generate_documentation_prompt

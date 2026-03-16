@@ -10,10 +10,9 @@ from tablespec.prompts.expectation_guide import (
     get_llm_generatable_expectations,
     get_pending_decision_tree,
 )
-from tablespec.type_mappings import map_to_gx_spark_type
 
 
-def _has_validation_rules(umf_data: dict[str, Any]) -> bool:
+def has_validation_rules(umf_data: dict[str, Any]) -> bool:
     """Check if UMF data contains fields with validation rules."""
     validation_rule_indicators = [
         # Format patterns
@@ -71,7 +70,11 @@ def _has_validation_rules(umf_data: dict[str, Any]) -> bool:
 
     # Check column descriptions and sample values for validation patterns
     for col in umf_data.get("columns", []):
-        col_desc = col.get("description", "").lower()
+        # Skip None entries (defensive check for malformed UMF data)
+        if col is None:
+            continue
+
+        col_desc = (col.get("description") or "").lower()
 
         # Check description for validation rule indicators
         if any(indicator in col_desc for indicator in validation_rule_indicators):
@@ -90,7 +93,7 @@ def _has_validation_rules(umf_data: dict[str, Any]) -> bool:
     return False
 
 
-def _generate_validation_prompt(umf_data: dict[str, Any]) -> str:
+def generate_validation_prompt(umf_data: dict[str, Any]) -> str:
     """Generate Great Expectations suite creation prompt."""
     table_name = umf_data["table_name"]
     table_desc = umf_data.get("description", "No description available")
@@ -102,16 +105,14 @@ def _generate_validation_prompt(umf_data: dict[str, Any]) -> str:
     )
 
     # Load the GX schema from tablespec package (same package now)
-    schema_path = (
-        Path(__file__).parent.parent / "schemas" / "gx_expectation_suite.schema.json"
-    )
+    schema_path = Path(__file__).parent.parent / "schemas" / "gx_expectation_suite.schema.json"
     with schema_path.open() as f:
         gx_schema = json.load(f)
 
     # Extract key schema information
-    severity_levels = gx_schema["properties"]["expectations"]["items"]["properties"][
-        "meta"
-    ]["properties"]["severity"]["enum"]
+    severity_levels = gx_schema["properties"]["expectations"]["items"]["properties"]["meta"][
+        "properties"
+    ]["severity"]["enum"]
     name_pattern = gx_schema["properties"]["name"]["pattern"]
 
     # Get table-level LLM-generatable expectations (NOT baseline expectations)
@@ -119,21 +120,21 @@ def _generate_validation_prompt(umf_data: dict[str, Any]) -> str:
 
     # Start prompt with critical NO COMMENTS warning at top
     prompt = f"""╔══════════════════════════════════════════════════════════════╗
-║  🚨 CRITICAL: JSON OUTPUT FORMAT - NO COMMENTS ALLOWED 🚨   ║
+║  CRITICAL: JSON OUTPUT FORMAT - NO COMMENTS ALLOWED          ║
 ╔══════════════════════════════════════════════════════════════╗
 
 JSON DOES NOT SUPPORT COMMENTS (RFC 8259)
 
-❌ ABSOLUTELY FORBIDDEN:
-• // line comments
-• /* block comments */
-• # any other comment syntax
-• Explanatory text outside JSON structure
+ABSOLUTELY FORBIDDEN:
+- // line comments
+- /* block comments */
+- # any other comment syntax
+- Explanatory text outside JSON structure
 
-✅ REQUIRED:
-• Pure JSON only (must parse with json.loads())
-• No preprocessing, no comment stripping
-• Valid per RFC 8259 specification
+REQUIRED:
+- Pure JSON only (must parse with json.loads())
+- No preprocessing, no comment stripping
+- Valid per RFC 8259 specification
 
 Your output will be DIRECTLY parsed by Python's json.loads().
 If it contains comments, IT WILL FAIL.
@@ -158,13 +159,13 @@ If it contains comments, IT WILL FAIL.
 **Valid severity levels:** {", ".join(f'`"{s}"`' for s in severity_levels)}
 
 **Valid TABLE-LEVEL expectation types for LLM generation ({len(expectation_types)} types):**
-⚠️ These are the ONLY expectation types you should generate. Do NOT generate baseline expectations.
+These are the ONLY expectation types you should generate. Do NOT generate baseline expectations.
 {chr(10).join(f"- {t}" for t in expectation_types)}
 
 **FORBIDDEN legacy fields (will cause validation errors):**
-- ❌ `expectation_suite_name` → Use `name` instead
-- ❌ `data_asset_type` → Remove entirely (not in GX 1.6+)
-- ❌ `expectation_type` → Use `type` instead
+- `expectation_suite_name` -> Use `name` instead
+- `data_asset_type` -> Remove entirely (not in GX 1.6+)
+- `expectation_type` -> Use `type` instead
 
 ---
 
@@ -179,30 +180,122 @@ Generate a Great Expectations expectation suite for validating this healthcare t
 **Description**: {table_desc}
 **Source File**: {umf_data.get("source_file", "")}
 **Purpose**: Healthcare data validation for member outreach and care management
+"""
 
-## ✅ Baseline Expectations Already Generated
+    # Only include provenance fields section for non-generated tables
+    table_type = umf_data.get("table_type", "").lower()
+    if table_type != "generated":
+        prompt += """
+## Runtime Provenance Fields
+
+The following **8 provenance fields** are automatically added to every ingested table at runtime by the Bronze.Raw layer. These fields are available for validation rules and can be referenced in expectations:
+
+**meta_source_name** (STRING): Original source filename (e.g., "IL_Outreach_20240924.csv", "CA_Disposition_20241001.txt")
+- Use this to extract metadata from filenames (state codes, dates, vendor IDs, etc.)
+- Example validation: "Extract state from filename and validate against STATE column"
+- Pattern: Filename often contains structured information like {State}_{TableType}_{Date}.{ext}
+
+**meta_source_checksum** (STRING): SHA256 hash of the source file (Spark-computed)
+- Use this to ensure data integrity and deduplication
+- Example validation: "All rows from same file must have identical checksum"
+- Useful for: Detecting file corruption, ensuring complete file loads
+
+**meta_load_dt** (TIMESTAMP): Unix epoch timestamp when ingestion ran
+- Use this for data freshness validations and audit trails
+- Example validation: "Ingestion time must be within 24 hours of current time"
+- Useful for: SLA monitoring, detecting stale data
+
+**meta_snapshot_dt** (TIMESTAMP): File modification time (Unix epoch)
+- Use this to validate file age and recency
+- Example validation: "File modification time must be within reporting period"
+- Useful for: Ensuring timely file delivery, detecting backdated files
+
+**meta_source_offset** (LONG): Original row number in source file (1-indexed)
+- Use this for row-level traceability and debugging
+- Example validation: "Row numbers must be sequential and unique"
+- Useful for: Data lineage, troubleshooting specific rows
+
+**meta_checksum** (STRING): SHA256 hash of the input row data
+- Use this to detect duplicate or modified rows across ingestion runs
+- Example validation: "Row checksum must be unique within file"
+- Useful for: Deduplication, change detection
+
+**meta_pipeline_version** (STRING): Version of the pipeline artifact package
+- Use this to track which pipeline version processed the data
+- Example validation: "Pipeline version must match deployment version"
+- Useful for: Version auditing, rollback tracking
+
+**meta_component** (STRING): Version of the runtime package
+- Use this to track which runtime version performed the ingestion
+- Example validation: "Runtime version must be compatible with pipeline"
+- Useful for: Compatibility checks, troubleshooting version issues
+
+**Common Provenance-Based Validation Patterns:**
+
+1. **Filename-to-Column Validation**: Extract structured data from meta_source_name and validate against table columns
+   - Example: Regex extract state code from filename, compare to STATE column
+   - Use `expect_validation_rule_pending_implementation` with `suggested_implementation: "Custom UDF to parse filename"`
+
+2. **File-Level Consistency**: Ensure all rows from same file share characteristics
+   - Example: All rows with same meta_source_checksum must have same STATE value
+   - Use `expect_compound_columns_to_be_unique` or pending implementation for complex rules
+
+3. **Temporal Validations**: Use timestamps to enforce timeliness
+   - Example: meta_snapshot_dt must be <= CHASE_LOAD_DATE (file can't be modified after it was processed)
+   - Use `expect_column_pair_values_a_to_be_greater_than_b` for timestamp comparisons
+
+4. **Data Lineage**: Track data back to source using row numbers and checksums
+   - Example: Combination of meta_source_checksum + meta_source_offset should be unique across loads
+   - Use `expect_compound_columns_to_be_unique`
+
+**When to use provenance fields:**
+- When filename contains structured metadata (state, date, vendor, project)
+- When validating data freshness or timeliness
+- When ensuring file-level consistency across rows
+- When building audit trails or data lineage
+- NOT for standard business logic that doesn't depend on file metadata
+"""
+    else:
+        # For generated tables, add a note explaining why provenance fields aren't available
+        prompt += """
+## Note: Provenance Fields Not Available
+
+This is a **generated table** (table_type='generated') that is created from derivations of other tables.
+Unlike ingested tables, generated tables do not have provenance fields (meta_source_name, meta_source_checksum, etc.)
+because they are not directly loaded from source files.
+
+Focus validation rules on:
+- Business logic and data integrity
+- Cross-column relationships and constraints
+- Derived field consistency
+- Referential integrity with source tables
+"""
+
+    prompt += f"""
+## Baseline Expectations Already Generated
 
 **{len(baseline_expectations)} expectations have been automatically generated from UMF metadata:**
 - Column existence checks for all {len(umf_data.get("columns", []))} columns
 - Type validation (expect_column_values_to_be_of_type) for all columns
 - Nullability checks (expect_column_values_to_not_be_null) for required fields
-- Length constraints (expect_column_value_lengths_to_be_less_than_or_equal_to) where specified
+- Length constraints (expect_column_value_lengths_to_be_between) where specified
 - Date format validation (expect_column_values_to_match_strftime_format) for DATE columns
-- Structural checks (expect_table_column_count_to_equal, expect_table_columns_to_match_ordered_list)
 
-**⚠️ DO NOT generate expectations for:**
+**Note:** All structural expectations (column count, column order, column set) are generated automatically by baseline code and include provenance columns. Do NOT generate these expectations - they are in the baseline_only category.
+
+**DO NOT generate expectations for:**
 - Column existence (already generated)
 - Column types (already generated)
 - Basic nullability (already generated)
 - Max length constraints (already generated)
 - Basic date formats (already generated)
-- Table structure (already generated)
+- Column count (conflicts with provenance - use column set instead)
 
 **These {len(baseline_expectations)} baseline expectations will be automatically merged with your output.**
 
 ## Your Focus: TABLE-LEVEL Multi-Column Rules ONLY
 
-⚠️ **CRITICAL**: This is a TABLE-LEVEL validation prompt. Generate ONLY multi-column and cross-column expectations.
+**CRITICAL**: This is a TABLE-LEVEL validation prompt. Generate ONLY multi-column and cross-column expectations.
 
 Generate expectations ONLY for:
 1. **Multi-column uniqueness** (expect_compound_columns_to_be_unique)
@@ -210,18 +303,17 @@ Generate expectations ONLY for:
 2. **Cross-column comparisons** (expect_column_pair_values_a_to_be_greater_than_b, expect_column_pair_values_to_be_equal)
    - Date range validation (EndDate >= StartDate)
    - Amount comparisons (TotalAmount >= SubAmount)
-3. **Table-level structural rules** (expect_table_row_count_to_be_between, expect_table_columns_to_match_set)
-   - Row count constraints
-   - Required column sets
+3. **Table-level row count constraints** (expect_table_row_count_to_be_between)
+   - Row count validation based on business requirements
 4. **Pending complex rules** (expect_validation_rule_pending_implementation)
    - Complex multi-column business logic
    - External lookups or master table references
 
-❌ **DO NOT generate**:
-- Single-column value sets (expect_column_values_to_be_in_set) → Use column-level prompts
-- Single-column patterns (expect_column_values_to_match_regex) → Use column-level prompts
-- Column existence, types, nullability, length → Already handled by baseline
-- Any expectation with only a single `column` kwarg → Use column-level prompts
+**DO NOT generate**:
+- Single-column value sets (expect_column_values_to_be_in_set) -> Use column-level prompts
+- Single-column patterns (expect_column_values_to_match_regex) -> Use column-level prompts
+- Column existence, types, nullability, length -> Already handled by baseline
+- Any expectation with only a single `column` kwarg -> Use column-level prompts
 
 ## Column Specifications
 
@@ -229,21 +321,24 @@ Generate expectations ONLY for:
 
     # Add each column in compressed format (2 lines per column vs 6-8)
     for col in umf_data.get("columns", []):
+        # Skip None entries (defensive check for malformed UMF data)
+        if col is None:
+            continue
+
         col_name = col["name"]
-        col_desc = col.get("description", "No description")
+        col_desc = col.get("description") or "No description"
         data_type = col.get("data_type", "VARCHAR")
-        gx_type = map_to_gx_spark_type(data_type)
         sample_values = col.get("sample_values", [])
         max_length = col.get("max_length")
         nullable = col.get("nullable", {})
         format_spec = col.get("format", "")
         notes = col.get("notes", [])
 
-        # Build compact single-line format: **COL** (TYPE→GXType): Desc. [Req: LOBs.] [Fmt: X.] [Ex: a,b.] [Note: X.]
-        line = f"**{col_name}** ({data_type}→{gx_type}): {col_desc}."
+        # Build compact single-line format: **COL** (TYPE): Desc. [Req: LOBs.] [Fmt: X.] [Ex: a,b.] [Note: X.]
+        line = f"**{col_name}** ({data_type}): {col_desc}."
 
         # Add required LOBs (only non-nullable)
-        req_lobs = [lob for lob, is_null in nullable.items() if not is_null]
+        req_lobs = [lob for lob, is_null in sorted(nullable.items()) if not is_null]
         if req_lobs:
             line += f" Req: {'/'.join(req_lobs)}."
 
@@ -268,10 +363,7 @@ Generate expectations ONLY for:
                     sample_str.lower() == col_name.lower()
                     or sample_str.upper() == col_name.upper()
                     or sample_str.replace(" ", "_").lower() == col_name.lower()
-                    or (
-                        col_desc
-                        and sample_str.lower() == col_desc.lower()[: len(sample_str)]
-                    )
+                    or (col_desc and sample_str.lower() == col_desc.lower()[: len(sample_str)])
                 )
 
                 if not is_header:
@@ -291,7 +383,7 @@ Generate expectations ONLY for:
     if "relationships" in umf_data:
         prompt += "\n## Table Relationships\n"
         for rel in umf_data.get("relationships", {}).get("outgoing", []):
-            prompt += f"- {rel.get('source_column', '')} → {rel.get('target_table', '')}.{rel.get('target_column', '')}\n"
+            prompt += f"- {rel.get('source_column', '')} -> {rel.get('target_table', '')}.{rel.get('target_column', '')}\n"
 
     # Add quick reference and pending decision tree
     quick_reference = format_quick_reference(context="table")
@@ -314,6 +406,23 @@ Generate expectations ONLY for:
 **Table-level rules:**
 - `expect_table_row_count_to_be_between`: At least one of `min_value` or `max_value`
 - `expect_table_columns_to_match_set`: Requires `column_set` (array of column names)
+
+**Optional parameters for multi-column expectations:**
+- `ignore_row_if`: Controls row filtering in multi-column comparisons
+
+**CRITICAL GX API INCONSISTENCY**: Different expectation types require DIFFERENT enum values!
+
+**For COLUMN PAIR expectations** (`expect_column_pair_values_a_to_be_greater_than_b`, `expect_column_pair_values_to_be_equal`):
+  - `"both_values_are_missing"` - Skip rows where BOTH compared columns are null
+  - `"either_value_is_missing"` - Skip rows where EITHER compared column is null (most common for pairs)
+  - `"neither"` - Don't skip any rows (validate all rows, including nulls)
+
+**For MULTI-COLUMN expectations** (`expect_compound_columns_to_be_unique`, `expect_select_column_values_to_be_unique_within_record`):
+  - `"all_values_are_missing"` - Skip rows where ALL compared columns are null
+  - `"any_value_is_missing"` - Skip rows where ANY compared column is null (most common for multi-column)
+  - `"never"` - Don't skip any rows (validate all rows, including nulls)
+
+Using the wrong value set will cause validation errors! Match the expectation type to its correct enum values.
 
 {pending_tree}
 
@@ -340,9 +449,9 @@ Generate expectations ONLY for:
 **CRITICAL: Use Great Expectations 1.6+ Format**
 
 DO NOT use these legacy field names:
-- ❌ `expectation_suite_name` → Use `name` instead
-- ❌ `data_asset_type` → Remove this field entirely (not in GX 1.6+)
-- ❌ `expectation_type` → Use `type` instead
+- `expectation_suite_name` -> Use `name` instead
+- `data_asset_type` -> Remove this field entirely (not in GX 1.6+)
+- `expectation_type` -> Use `type` instead
 
 Generate a valid JSON object with this EXACT structure:
 
@@ -351,7 +460,7 @@ Generate a valid JSON object with this EXACT structure:
   "name": "{table_name}_suite",
   "meta": {{
 "table_name": "{table_name}",
-"generated_by": "pulseflow_phase_3",
+"generated_by": "tablespec_validation",
 "generation_date": "2025-01-29",
 "great_expectations_version": "1.6.0"
   }},
@@ -403,9 +512,9 @@ Focus on generating TABLE-LEVEL expectations ONLY:
    - Use `expect_column_pair_values_a_to_be_greater_than_b` with `column_A`, `column_B`, and `or_equal` kwargs
    - Example: EndDate >= StartDate
 
-3. **Table-level structural rules** - Row counts, column sets
+3. **Table-level row count constraints** - Validate row counts based on business requirements
    - Use `expect_table_row_count_to_be_between` for row count constraints
-   - Use `expect_table_columns_to_match_set` for required column combinations
+   - Note: Structural column checks are handled by baseline code
 
 4. **Complex unmappable multi-column rules** - Use `expect_validation_rule_pending_implementation`
    - Cross-table lookups (reference to master tables)
@@ -418,18 +527,18 @@ Write comprehensive descriptions that explain WHY the rule exists and HOW it rel
 
 ## FINAL REQUIREMENT
 
-⚠️ REMINDER: JSON = NO COMMENTS (this is the 3rd time we're telling you)
+REMINDER: JSON = NO COMMENTS (this is the 3rd time we're telling you)
 
 Return ONLY valid JSON. Your output will be DIRECTLY parsed by Python's json.loads().
 
 **CRITICAL OUTPUT RULES (REPEATED FOR EMPHASIS):**
-- ❌ NO markdown code blocks (no ```json)
-- ❌ NO JavaScript comments (NO // or /* */ - JSON DOES NOT SUPPORT COMMENTS)
-- ❌ NO explanations or commentary
-- ❌ NO trailing commas
-- ✅ ONLY valid JSON per RFC 8259
-- ✅ Parseable by json.loads() WITHOUT preprocessing
-- ✅ Must conform to GX 1.6+ format
+- NO markdown code blocks (no ```json)
+- NO JavaScript comments (NO // or /* */ - JSON DOES NOT SUPPORT COMMENTS)
+- NO explanations or commentary
+- NO trailing commas
+- ONLY valid JSON per RFC 8259
+- Parseable by json.loads() WITHOUT preprocessing
+- Must conform to GX 1.6+ format
 
 **JSON DOES NOT SUPPORT COMMENTS. We've said this THREE times in this prompt. If you add comments, your output WILL FAIL parsing.**
 
@@ -439,3 +548,8 @@ Legacy fields FORBIDDEN: expectation_suite_name | data_asset_type | expectation_
 """
 
     return prompt
+
+
+# Deprecated aliases - use the public names above instead
+_has_validation_rules = has_validation_rules
+_generate_validation_prompt = generate_validation_prompt

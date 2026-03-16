@@ -1,20 +1,23 @@
 """Relationship prompt generator - Generates FK relationship detection prompts."""
 
+import logging
 from pathlib import Path
 
 import yaml
 
-from .utils import _clean_description, _is_relationship_relevant_column
+from .utils import clean_description, is_relationship_relevant_column
+
+logger = logging.getLogger(__name__)
 
 
-def _generate_relationship_prompt(umf_dir: Path, lookup_dir: Path) -> str:
+def generate_relationship_prompt(umf_dir: Path, lookup_dir: Path) -> str:
     """Generate comprehensive relationship detection prompt."""
     # Load all UMF files for relationship analysis
     all_tables = {}
     lookup_tables = {}
 
     # Load main data tables
-    umf_files = list(umf_dir.glob("*.umf.yaml"))
+    umf_files = sorted(umf_dir.glob("*.umf.yaml"))
     filtered_count = 0
     for umf_file in umf_files:
         try:
@@ -30,11 +33,11 @@ def _generate_relationship_prompt(umf_dir: Path, lookup_dir: Path) -> str:
             table_name = umf_data["table_name"]
             all_tables[table_name] = umf_data
         except Exception:
-            pass  # Skip files that fail to load
+            logger.debug("Failed to load UMF file %s, skipping", umf_file)
 
     # Load lookup tables if they exist
     if lookup_dir.exists():
-        lookup_files = list(lookup_dir.glob("*.lookup.yaml"))
+        lookup_files = sorted(lookup_dir.glob("*.lookup.yaml"))
         for lookup_file in lookup_files:
             try:
                 with lookup_file.open() as f:
@@ -43,7 +46,7 @@ def _generate_relationship_prompt(umf_dir: Path, lookup_dir: Path) -> str:
                 table_name = lookup_data["table_name"]
                 lookup_tables[table_name] = lookup_data
             except Exception:
-                pass  # Skip lookup files that fail to load
+                logger.debug("Failed to load lookup file %s, skipping", lookup_file)
 
     prompt = """# Healthcare Data Table Relationship Analysis
 
@@ -72,9 +75,9 @@ For example:
 ## Examples of Fuzzy Matching Relationships
 
 **Example 1**: Member ID variations (use exact column names)
-- OutreachList.ClientMemberId ↔ SupplementalContact.ClientMbrID (confidence: 0.90)
-- OutreachList.ClientMemberId ↔ Vendor_Assessment.ClientMemberId (confidence: 0.95)
-- DisenrollmentFile.ClientMbrID ↔ SupplementalPhone.ClientMbrID (confidence: 0.95)
+- OutreachList.ClientMemberId <-> SupplementalContact.ClientMbrID (confidence: 0.90)
+- OutreachList.ClientMemberId <-> Vendor_Assessment.ClientMemberId (confidence: 0.95)
+- DisenrollmentFile.ClientMbrID <-> SupplementalPhone.ClientMbrID (confidence: 0.95)
 
 Note: Even though ClientMemberId and ClientMbrID represent the same concept, they must be listed with their exact column names.
 
@@ -138,9 +141,9 @@ Apply this systematic approach:
 
 **Example Decision Process:**
 - Table A and B both have: DateColumn, TypeColumn, and IdentifierColumn
-- DateColumn: ~5 unique values (5% cardinality) → confidence: 0.3
-- TypeColumn: ~10 unique values (10% cardinality) → confidence: 0.4
-- IdentifierColumn: ~900 unique values (90% cardinality) → confidence: 0.95
+- DateColumn: ~5 unique values (5% cardinality) -> confidence: 0.3
+- TypeColumn: ~10 unique values (10% cardinality) -> confidence: 0.4
+- IdentifierColumn: ~900 unique values (90% cardinality) -> confidence: 0.95
 - **Result**: Use IdentifierColumn for the relationship
 
 3. **Consider Healthcare Domain**: Use your knowledge of healthcare data patterns:
@@ -205,6 +208,67 @@ Example output for multiple matches:
 ]
 ```
 
+## CRITICAL: JSON Structure Requirements
+
+**Each relationship MUST be a complete, flat object with ALL required fields:**
+
+Required fields for every relationship:
+1. `source_table` (string)
+2. `source_column` (string)
+3. `target_table` (string)
+4. `target_column` (string)
+5. `relationship_type` (string)
+6. `confidence` (number between 0 and 1)
+7. `reasoning` (string)
+8. `cardinality` (string)
+
+**FORBIDDEN patterns that will cause parsing errors:**
+
+NEVER nest a `relationships` array inside a relationship object:
+```json
+{
+  "source_table": "Table1",
+  "source_column": "ID",
+  "relationships": [...]
+}
+```
+
+NEVER embed JSON structures in field values:
+```json
+{
+  "source_table": "Table1",
+  "source_column": "CLIENT_M{\\n  \\"relationships\\": [..."
+}
+```
+
+NEVER omit required fields:
+```json
+{
+  "source_table": "Table1",
+  "source_column": "ID"
+}
+```
+
+CORRECT format - flat object with all required fields:
+```json
+{
+  "source_table": "Table1",
+  "source_column": "RecordID",
+  "target_table": "Table2",
+  "target_column": "RecordID",
+  "relationship_type": "foreign_to_foreign",
+  "confidence": 0.95,
+  "reasoning": "High cardinality unique identifier match",
+  "cardinality": "one-to-many"
+}
+```
+
+**Before submitting your output:**
+1. Verify each relationship in the array is a complete, flat object
+2. Verify each relationship has all 8 required fields
+3. Verify no relationship contains nested arrays or objects
+4. Verify all field values are simple strings/numbers (not JSON structures)
+
 ## Relationship Completeness Check
 
 After identifying relationships, verify:
@@ -228,7 +292,7 @@ After identifying relationships, verify:
             col_type = col.get("data_type", "VARCHAR")
             col_desc = col.get("description", "No description")
 
-            if _is_relationship_relevant_column(col_name, col_desc, col_type):
+            if is_relationship_relevant_column(col_name, col_desc, col_type):
                 relevant_columns.append(col)
 
         # Skip table if no relevant columns found
@@ -245,7 +309,7 @@ After identifying relationships, verify:
         for col in relevant_columns:
             col_name = col["name"]
             col_type = col.get("data_type", "VARCHAR")
-            col_desc = _clean_description(col.get("description", "No description"))
+            col_desc = clean_description(col.get("description", "No description"))
 
             # Use compact format - remove nullable info and sample values
             prompt += f"- `{col_name}` ({col_type}): {col_desc}\n"
@@ -255,7 +319,9 @@ After identifying relationships, verify:
         prompt += f"\n## Lookup Tables ({len(lookup_tables)} tables)\n\n"
         prompt += "**IMPORTANT**: Lookup tables contain reference/code data with high cardinality primary keys.\n"
         prompt += "Look for columns in main tables that might reference these lookup table primary keys.\n"
-        prompt += "Common patterns: STATUS, DISPOSITION, TYPE, CODE columns linking to lookup tables.\n\n"
+        prompt += (
+            "Common patterns: STATUS, DISPOSITION, TYPE, CODE columns linking to lookup tables.\n\n"
+        )
 
         for table_name in sorted(lookup_tables.keys()):
             lookup_data = lookup_tables[table_name]
@@ -299,12 +365,8 @@ After identifying relationships, verify:
                 for col in lookup_columns:
                     col_name = col["name"]
                     col_type = col.get("data_type", "VARCHAR")
-                    col_desc = _clean_description(
-                        col.get("description", "No description")
-                    )
-                    pk_marker = (
-                        " (PRIMARY KEY)" if col.get("is_primary_key", False) else ""
-                    )
+                    col_desc = clean_description(col.get("description", "No description"))
+                    pk_marker = " (PRIMARY KEY)" if col.get("is_primary_key", False) else ""
 
                     prompt += f"- `{col_name}` ({col_type}){pk_marker}: {col_desc}\n"
 
@@ -312,35 +374,60 @@ After identifying relationships, verify:
 
 ## Expected Output Format
 
+**IMPORTANT**: The output JSON has THREE separate sections:
+1. `relationships` array - Contains ONLY flat relationship objects (no nesting)
+2. `relationship_groups` array - Separate section for grouping analysis
+3. `data_integrity_notes` array - Separate section for observations
+
 Please provide your analysis in the following JSON format:
 
 ```json
 {
   "relationships": [
-{
-  "source_table": "Table1",
-  "source_column": "COLUMN_NAME",
-  "target_table": "Table2",
-  "target_column": "COLUMN_NAME",
-  "relationship_type": "primary_to_foreign|foreign_to_foreign|many_to_many|hierarchical|lookup_to_main",
-  "confidence": 0.95,
-  "reasoning": "Clear explanation of why this relationship exists",
-  "cardinality": "one-to-one|one-to-many|many-to-one|many-to-many"
-}
+    {
+      "source_table": "Table1",
+      "source_column": "COLUMN_NAME",
+      "target_table": "Table2",
+      "target_column": "COLUMN_NAME",
+      "relationship_type": "primary_to_foreign|foreign_to_foreign|many_to_many|hierarchical|lookup_to_main",
+      "confidence": 0.95,
+      "reasoning": "Clear explanation of why this relationship exists",
+      "cardinality": "one-to-one|one-to-many|many-to-one|many-to-many"
+    },
+    {
+      "source_table": "Table3",
+      "source_column": "ANOTHER_COLUMN",
+      "target_table": "Table4",
+      "target_column": "ANOTHER_COLUMN",
+      "relationship_type": "foreign_to_foreign",
+      "confidence": 0.92,
+      "reasoning": "Another clear explanation",
+      "cardinality": "many-to-one"
+    }
   ],
   "relationship_groups": [
-{
-  "entity_type": "Member|Provider|Claim|Authorization|etc",
-  "description": "How this entity type connects across tables",
-  "tables_involved": ["Table1", "Table2", "Table3"],
-  "key_columns": ["COLUMN1", "COLUMN2"]
-}
+    {
+      "entity_type": "Member|Provider|Claim|Authorization|etc",
+      "description": "How this entity type connects across tables",
+      "tables_involved": ["Table1", "Table2", "Table3"],
+      "key_columns": ["COLUMN1", "COLUMN2"]
+    }
   ],
   "data_integrity_notes": [
-"Any observations about potential data quality issues or missing relationships"
+    "Any observations about potential data quality issues or missing relationships"
   ]
 }
 ```
+
+**Field Validation Checklist** - Every relationship object must have:
+- source_table: String (table name from specifications)
+- source_column: String (exact column name from table)
+- target_table: String (table name from specifications)
+- target_column: String (exact column name from table)
+- relationship_type: String (one of the allowed types)
+- confidence: Number between 0.0 and 1.0
+- reasoning: String explaining the relationship
+- cardinality: String (one of: one-to-one, one-to-many, many-to-one, many-to-many)
 
 ## Analysis Request
 
@@ -354,7 +441,7 @@ Analyze all tables and identify relationships following these principles:
 
 **Special Focus on Lookup Table Relationships:**
 6. **Identify lookup table references**: Look for columns in main tables that reference lookup table primary keys
-7. **Common lookup patterns**: STATUS → Disposition_Statuses, TYPE → Standard_Dispositions, CODE → Master_Data
+7. **Common lookup patterns**: STATUS -> Disposition_Statuses, TYPE -> Standard_Dispositions, CODE -> Master_Data
 8. **Use lookup_to_main relationship type**: When a main table column references a lookup table primary key
 9. **High confidence for exact matches**: Lookup relationships should have confidence 0.90+ when column names suggest status/type/code patterns
 
@@ -369,6 +456,33 @@ Analyze all tables and identify relationships following these principles:
 Remember: A good join key distributes data evenly (high cardinality), while a bad join key creates cartesian products (low cardinality).
 
 Focus on relationships that are internal to this dataset - do not assume external reference tables exist unless they are listed above.
+
+## FINAL OUTPUT VALIDATION
+
+Before submitting your JSON output, perform these validation checks:
+
+1. **Structure Validation:**
+   - The output is valid JSON (no syntax errors)
+   - Top-level object has exactly 3 keys: "relationships", "relationship_groups", "data_integrity_notes"
+   - Each key maps to an array (not an object or nested structure)
+
+2. **Relationships Array Validation:**
+   - Every item in the "relationships" array is a flat object (no nested arrays or objects)
+   - Every relationship has ALL 8 required fields (source_table, source_column, target_table, target_column, relationship_type, confidence, reasoning, cardinality)
+   - No relationship has extra keys like "relationships", "related_tables", or any nested structures
+   - All field values are simple types (strings for text, numbers for confidence)
+
+3. **Field Value Validation:**
+   - No field value contains embedded JSON or newline characters
+   - Column names match EXACTLY as shown in specifications (no normalization)
+   - Table names match EXACTLY as shown in specifications
+   - Confidence values are between 0.0 and 1.0
+
+If any validation check fails, fix the issue before outputting. Malformed JSON will cause pipeline failures.
 """
 
     return prompt
+
+
+# Deprecated alias - use the public name above instead
+_generate_relationship_prompt = generate_relationship_prompt

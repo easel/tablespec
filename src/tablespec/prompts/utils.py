@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 
 
-def _is_relationship_relevant_column(
+def is_relationship_relevant_column(
     col_name: str, col_desc: str, col_type: str
 ) -> bool:
     """Filter columns to only include those relevant for relationship discovery."""
@@ -68,7 +68,7 @@ def _is_relationship_relevant_column(
     )
 
 
-def _clean_description(description: str) -> str:
+def clean_description(description: str) -> str:
     """Clean description to remove validation rules and examples."""
     if not description:
         return "No description"
@@ -95,10 +95,16 @@ def _clean_description(description: str) -> str:
     return cleaned if cleaned else "No description"
 
 
-def _load_umf(umf_file: Path) -> dict:
+def load_umf(umf_file: Path) -> dict:
     """Load UMF data from a YAML file."""
     try:
         with umf_file.open(encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except (OSError, UnicodeDecodeError, yaml.YAMLError):
         return {}
+
+
+# Deprecated aliases - use the public names above instead
+_is_relationship_relevant_column = is_relationship_relevant_column
+_clean_description = clean_description
+_load_umf = load_umf

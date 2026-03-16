@@ -184,8 +184,8 @@
               },
               "ignore_row_if": {
                 "type": "string",
-                "enum": ["both_values_are_missing", "either_value_is_missing", "neither"],
-                "description": "Condition for ignoring rows in comparisons"
+                "enum": ["both_values_are_missing", "either_value_is_missing", "neither", "all_values_are_missing", "any_value_is_missing", "never"],
+                "description": "Condition for ignoring rows in comparisons (column pair: both_values_are_missing/either_value_is_missing/neither; multicolumn: all_values_are_missing/any_value_is_missing/never)"
               },
               "output_strftime_format": {
                 "type": "string",

@@ -1,4 +1,4 @@
-.PHONY: help install install-dev format lint type-check test test-unit test-integration coverage clean build run
+.PHONY: help install install-dev install-spark setup-spark format lint type-check test test-unit test-integration coverage clean build run
 
 # Default target
 help: ## Display this help message
@@ -11,6 +11,12 @@ install: ## Install project dependencies
 
 install-dev: ## Install project with dev dependencies
 	uv sync --all-extras --group dev
+
+install-spark: ## Install with Spark extras and dev dependencies
+	uv sync --extra spark --group dev
+
+setup-spark: install-spark ## Download and configure local Spark 4.0 + JDK 21 into .local/
+	uv run python scripts/setup_spark.py
 
 pre-commit-install: ## Install pre-commit hooks
 	uv run pre-commit install

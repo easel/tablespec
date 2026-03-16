@@ -1,14 +1,49 @@
 """Schema Generators - SQL DDL, PySpark, and JSON Schema generation."""
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypedDict
 
 from tablespec.type_mappings import map_to_json_type, map_to_pyspark_type
+
+
+class JSONSchemaProperty(TypedDict, total=False):
+    """JSON Schema property definition."""
+
+    type: str
+    description: str
+    maxLength: int
+    examples: list[Any]
+
+
+class JSONSchema(TypedDict, total=False):
+    """JSON Schema structure."""
+
+    properties: dict[str, JSONSchemaProperty]
+    required: list[str]
+
+
+def _resolve_nullable(nullable_value: Any) -> bool:
+    """Resolve nullable value from bool, dict (LOB-specific), or None.
+
+    Handles both simple boolean nullable flags and LOB-specific nullable dicts
+    (e.g., {"MD": True, "MP": False, "ME": True} for Medicaid/Medicare).
+
+    Returns True (nullable) by default when value is missing or unrecognized.
+    """
+    if nullable_value is None:
+        return True
+    if isinstance(nullable_value, bool):
+        return nullable_value
+    if isinstance(nullable_value, dict):
+        # If all LOBs allow null, column is nullable
+        return all(nullable_value.values()) if nullable_value else True
+    return True
 
 
 def generate_sql_ddl(umf_data: dict[str, Any]) -> str:
     """Generate SQL DDL from UMF data."""
     table_name = umf_data["table_name"]
+    canonical_name = umf_data.get("canonical_name") or table_name
 
     # Use source file modified time if available, otherwise use current time
     metadata = umf_data.get("metadata") or {}
@@ -22,7 +57,7 @@ def generate_sql_ddl(umf_data: dict[str, Any]) -> str:
         timestamp = datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
 
     ddl_lines = [
-        f"-- DDL for {table_name}",
+        f"-- DDL for {canonical_name}",
         "-- Generated from UMF specification",
         f"-- Source file modified: {timestamp}",
         "",
@@ -33,7 +68,8 @@ def generate_sql_ddl(umf_data: dict[str, Any]) -> str:
     for col in umf_data["columns"]:
         col_name = col["name"]
         data_type = col.get("data_type", "VARCHAR")
-        nullable = "" if col.get("nullable", True) else " NOT NULL"
+        is_nullable = _resolve_nullable(col.get("nullable"))
+        nullable = "" if is_nullable else " NOT NULL"
 
         # Handle specific data types
         if data_type == "VARCHAR" and col.get("max_length"):
@@ -82,8 +118,17 @@ def generate_sql_ddl(umf_data: dict[str, Any]) -> str:
 
 
 def generate_pyspark_schema(umf_data: dict[str, Any]) -> str:
-    """Generate PySpark schema from UMF data."""
+    """Generate PySpark schema from UMF data.
+
+    Includes:
+        - Data columns from source files
+        - Filename-sourced business columns (extracted during ingestion)
+
+    Excludes:
+        - Provenance metadata columns (meta_*) - added at runtime, standardized across all tables
+    """
     table_name = umf_data["table_name"]
+    canonical_name = umf_data.get("canonical_name") or table_name
 
     # Use source file modified time if available, otherwise use current time
     metadata = umf_data.get("metadata") or {}
@@ -97,9 +142,10 @@ def generate_pyspark_schema(umf_data: dict[str, Any]) -> str:
         timestamp = datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
 
     schema_lines = [
-        f"# PySpark Schema for {table_name}",
+        f"# PySpark Schema for {canonical_name}",
         "# Generated from UMF specification",
         f"# Source file modified: {timestamp}",
+        "# NOTE: Includes data + filename-sourced columns; excludes meta_* provenance columns",
         "",
         "from pyspark.sql.types import StructType, StructField",
         "from pyspark.sql.types import StringType, IntegerType, LongType, DecimalType",
@@ -112,7 +158,7 @@ def generate_pyspark_schema(umf_data: dict[str, Any]) -> str:
     for col in umf_data["columns"]:
         col_name = col["name"]
         data_type = col.get("data_type", "VARCHAR")
-        nullable = col.get("nullable", True)
+        nullable = _resolve_nullable(col.get("nullable"))
 
         # Map data types to PySpark types
         pyspark_type = map_to_pyspark_type(data_type)
@@ -129,12 +175,13 @@ def generate_pyspark_schema(umf_data: dict[str, Any]) -> str:
 def generate_json_schema(umf_data: dict[str, Any]) -> dict[str, Any]:
     """Generate JSON schema from UMF data."""
     table_name = umf_data["table_name"]
+    canonical_name = umf_data.get("canonical_name") or table_name
 
-    schema = {
+    schema: dict[str, Any] = {
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "title": f"{table_name} Schema",
+        "title": f"{canonical_name} Schema",
         "type": "object",
-        "description": umf_data.get("description", f"Schema for {table_name} table"),
+        "description": umf_data.get("description", f"Schema for {canonical_name} table"),
         "properties": {},
         "required": [],
     }
@@ -142,12 +189,12 @@ def generate_json_schema(umf_data: dict[str, Any]) -> dict[str, Any]:
     for col in umf_data["columns"]:
         col_name = col["name"]
         col_desc = col.get("description", "")
-        nullable = col.get("nullable", True)
+        nullable = _resolve_nullable(col.get("nullable"))
 
         # Map data type to JSON schema type
         json_type = map_to_json_type(col.get("data_type", "VARCHAR"))
 
-        prop = {"type": json_type, "description": col_desc}
+        prop: JSONSchemaProperty = {"type": json_type, "description": col_desc}
 
         # Add additional constraints
         if col.get("max_length"):
