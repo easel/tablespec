@@ -48,9 +48,11 @@ from tablespec.prompts import (
     should_generate_column_prompt,
 )
 from tablespec.schemas import (
+    SQLPlanGenerator,
     generate_json_schema,
     generate_pyspark_schema,
     generate_sql_ddl,
+    generate_sql_plan,
 )
 from tablespec.type_mappings import (
     VALID_PYSPARK_TYPES,
@@ -81,9 +83,11 @@ __all__ = [
     "load_umf_from_yaml",
     "save_umf_to_yaml",
     # -- Schema Generation --
+    "SQLPlanGenerator",
     "generate_json_schema",
     "generate_pyspark_schema",
     "generate_sql_ddl",
+    "generate_sql_plan",
     # -- Type Mappings --
     "VALID_PYSPARK_TYPES",
     "map_pyspark_to_sql_type",

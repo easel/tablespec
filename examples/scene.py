@@ -294,6 +294,128 @@ def scene_spark():
     spark.stop()
 
 
+def scene_sql_plan():
+    from tablespec import (
+        UMF,
+        UMFColumn,
+        UMFColumnDerivation,
+        DerivationCandidate,
+        Nullable,
+        Relationships,
+        OutgoingRelationship,
+        generate_sql_plan,
+    )
+
+    # Build a derived table that joins claims + providers
+    target = UMF(
+        version="1.0",
+        table_name="Claims_Summary",
+        description="Enriched claims with provider info",
+        table_type="generated",
+        columns=[
+            UMFColumn(
+                name="claim_id",
+                data_type="VARCHAR",
+                length=50,
+                description="Unique claim identifier",
+                nullable=Nullable(MD=False, MP=False, ME=False),
+                derivation=UMFColumnDerivation(
+                    strategy="primary_key",
+                    candidates=[
+                        DerivationCandidate(
+                            table="Medical_Claims",
+                            column="claim_id",
+                            priority=1,
+                        )
+                    ],
+                ),
+            ),
+            UMFColumn(
+                name="claim_amount",
+                data_type="DECIMAL",
+                precision=10,
+                scale=2,
+                description="Claim amount",
+                derivation=UMFColumnDerivation(
+                    candidates=[
+                        DerivationCandidate(
+                            table="Medical_Claims",
+                            column="claim_amount",
+                            priority=1,
+                        )
+                    ],
+                ),
+            ),
+            UMFColumn(
+                name="provider_name",
+                data_type="VARCHAR",
+                length=200,
+                description="Provider full name",
+                derivation=UMFColumnDerivation(
+                    candidates=[
+                        DerivationCandidate(
+                            table="Providers",
+                            column="provider_name",
+                            priority=1,
+                        )
+                    ],
+                ),
+            ),
+            UMFColumn(
+                name="state_code",
+                data_type="VARCHAR",
+                length=2,
+                description="Provider state",
+                derivation=UMFColumnDerivation(
+                    candidates=[
+                        DerivationCandidate(
+                            table="Providers",
+                            column="state_code",
+                            priority=1,
+                        )
+                    ],
+                ),
+            ),
+        ],
+        relationships=Relationships(
+            outgoing=[
+                OutgoingRelationship(
+                    target_table="Medical_Claims",
+                    source_column="claim_id",
+                    target_column="claim_id",
+                    type="foreign_to_primary",
+                    confidence=1.0,
+                ),
+                OutgoingRelationship(
+                    target_table="Providers",
+                    source_column="provider_id",
+                    target_column="provider_id",
+                    type="foreign_to_primary",
+                    confidence=1.0,
+                ),
+            ]
+        ),
+    )
+
+    from tablespec import load_umf_from_yaml
+
+    claims = load_umf_from_yaml(str(CLAIMS_YAML))
+    providers = load_umf_from_yaml(str(PROVIDERS_YAML))
+
+    related = {
+        "Medical_Claims": claims,
+        "Providers": providers,
+    }
+
+    sql = generate_sql_plan(target, related)
+    # Show first 40 lines
+    lines = sql.splitlines()
+    for line in lines[:40]:
+        print(line)
+    if len(lines) > 40:
+        print(f"... ({len(lines)} total lines)")
+
+
 # ─── Dispatch ─────────────────────────────────────────────────────
 
 SCENES = {
@@ -305,6 +427,7 @@ SCENES = {
     "gx": scene_gx,
     "prompts": scene_prompts,
     "diff": scene_diff,
+    "sql_plan": scene_sql_plan,
     "spark": scene_spark,
 }
 

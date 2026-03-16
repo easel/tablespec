@@ -149,7 +149,16 @@ echo
 run uv run python examples/scene.py diff
 wait_for_clip "${CLIP_diff:-5}" 3
 
-# ─── Scene 9: Spark ──────────────────────────────────────────────
+# ─── Scene 9: SQL Plan Generation ────────────────────────────────
+
+divider
+mark "sql_plan"
+narrate "Generate full SQL execution plans from UMF — joins, derivations, survivorship, all automatic."
+echo
+run uv run python examples/scene.py sql_plan
+wait_for_clip "${CLIP_sql_plan:-8}" 4
+
+# ─── Scene 10: Spark ─────────────────────────────────────────────
 
 divider
 mark "spark"

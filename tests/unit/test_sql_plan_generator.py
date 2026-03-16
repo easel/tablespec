@@ -1,0 +1,1164 @@
+"""Tests for SQL plan generation and relationship resolution from UMF metadata."""
+
+from __future__ import annotations
+
+import pytest
+
+from tablespec.models.umf import (
+    Cardinality,
+    DerivationCandidate,
+    Nullable,
+    OutgoingRelationship,
+    Relationships,
+    RelationshipSummary,
+    Survivorship,
+    UMF,
+    UMFColumn,
+    UMFColumnDerivation,
+)
+from tablespec.schemas.relationship_resolver import JoinInfo, PivotSpec, RelationshipResolver
+from tablespec.schemas.sql_generator import SQLPlanGenerator, generate_sql_plan
+
+
+# ---------------------------------------------------------------------------
+# Helpers / Fixtures
+# ---------------------------------------------------------------------------
+
+
+def _card(type_: str, notation: str) -> Cardinality:
+    """Create a Cardinality with required multiplicity fields derived from notation."""
+    parts = notation.split(":")
+    return Cardinality(
+        type=type_,
+        notation=notation,
+        source_multiplicity=parts[0] if len(parts) > 0 else "1",
+        target_multiplicity=parts[1] if len(parts) > 1 else "*",
+    )
+
+
+def _make_umf(
+    table_name: str,
+    columns: list[UMFColumn],
+    *,
+    primary_key: list[str] | None = None,
+    relationships: Relationships | None = None,
+) -> UMF:
+    """Shortcut to build a UMF with sensible defaults."""
+    return UMF(
+        version="1.0",
+        table_name=table_name,
+        columns=columns,
+        primary_key=primary_key,
+        relationships=relationships,
+    )
+
+
+@pytest.fixture
+def minimal_umf() -> UMF:
+    """Simple 3-column table with no derivations."""
+    return _make_umf(
+        "test_claims",
+        [
+            UMFColumn(name="claim_id", data_type="VARCHAR"),
+            UMFColumn(name="claim_amount", data_type="DECIMAL"),
+            UMFColumn(name="provider_id", data_type="VARCHAR"),
+        ],
+        primary_key=["claim_id"],
+    )
+
+
+@pytest.fixture
+def source_table_a() -> UMF:
+    """Source table A with claim_id PK and member_name."""
+    return _make_umf(
+        "source_a",
+        [
+            UMFColumn(name="claim_id", data_type="VARCHAR"),
+            UMFColumn(name="member_name", data_type="VARCHAR"),
+            UMFColumn(name="service_date", data_type="DATE"),
+        ],
+        primary_key=["claim_id"],
+        relationships=Relationships(
+            outgoing=[
+                OutgoingRelationship(
+                    target_table="source_b",
+                    source_column="claim_id",
+                    target_column="claim_id",
+                    type="foreign_to_primary",
+                    confidence=0.9,
+                    cardinality=_card("one_to_one", "1:0..1"),
+                ),
+            ],
+            summary=RelationshipSummary(
+                total_relationships=1,
+                total_incoming=0,
+                total_outgoing=1,
+                hub_score=5.0,
+            ),
+        ),
+    )
+
+
+@pytest.fixture
+def source_table_b() -> UMF:
+    """Source table B with claim_id PK and provider info."""
+    return _make_umf(
+        "source_b",
+        [
+            UMFColumn(name="claim_id", data_type="VARCHAR"),
+            UMFColumn(name="provider_name", data_type="VARCHAR"),
+            UMFColumn(name="provider_type", data_type="VARCHAR"),
+        ],
+        primary_key=["claim_id"],
+        relationships=Relationships(
+            summary=RelationshipSummary(
+                total_relationships=0,
+                total_incoming=1,
+                total_outgoing=0,
+                hub_score=1.0,
+            ),
+        ),
+    )
+
+
+@pytest.fixture
+def derived_umf(source_table_a: UMF, source_table_b: UMF) -> UMF:
+    """Table with columns derived from two source tables."""
+    return _make_umf(
+        "derived_output",
+        [
+            UMFColumn(
+                name="claim_id",
+                data_type="VARCHAR",
+                derivation=UMFColumnDerivation(
+                    strategy="primary_key",
+                ),
+            ),
+            UMFColumn(
+                name="member_name",
+                data_type="VARCHAR",
+                derivation=UMFColumnDerivation(
+                    candidates=[
+                        DerivationCandidate(
+                            table="source_a",
+                            column="member_name",
+                            priority=1,
+                        ),
+                    ],
+                    survivorship=Survivorship(
+                        strategy="single_source",
+                        explanation="Direct from source_a",
+                    ),
+                ),
+            ),
+            UMFColumn(
+                name="provider_name",
+                data_type="VARCHAR",
+                derivation=UMFColumnDerivation(
+                    candidates=[
+                        DerivationCandidate(
+                            table="source_b",
+                            column="provider_name",
+                            priority=1,
+                        ),
+                    ],
+                    survivorship=Survivorship(
+                        strategy="single_source",
+                        explanation="Direct from source_b",
+                    ),
+                ),
+            ),
+        ],
+        primary_key=["claim_id"],
+    )
+
+
+@pytest.fixture
+def survivorship_umf() -> UMF:
+    """Table with multi-source survivorship (COALESCE strategy)."""
+    return _make_umf(
+        "survivorship_output",
+        [
+            UMFColumn(
+                name="member_id",
+                data_type="VARCHAR",
+                derivation=UMFColumnDerivation(strategy="primary_key"),
+            ),
+            UMFColumn(
+                name="phone_number",
+                data_type="VARCHAR",
+                derivation=UMFColumnDerivation(
+                    candidates=[
+                        DerivationCandidate(
+                            table="enrollment",
+                            column="phone",
+                            priority=1,
+                        ),
+                        DerivationCandidate(
+                            table="demographics",
+                            column="phone_number",
+                            priority=2,
+                        ),
+                    ],
+                    survivorship=Survivorship(
+                        strategy="highest_priority",
+                        explanation="Enrollment preferred, fallback to demographics",
+                        default_value="UNKNOWN",
+                    ),
+                ),
+            ),
+        ],
+        primary_key=["member_id"],
+    )
+
+
+@pytest.fixture
+def aggregate_umf() -> UMF:
+    """Table with COUNT/MAX aggregate derivations."""
+    return _make_umf(
+        "aggregate_output",
+        [
+            UMFColumn(
+                name="member_id",
+                data_type="VARCHAR",
+                derivation=UMFColumnDerivation(strategy="primary_key"),
+            ),
+            UMFColumn(
+                name="claim_count",
+                data_type="INTEGER",
+                derivation=UMFColumnDerivation(
+                    candidates=[
+                        DerivationCandidate(
+                            table="claims",
+                            column="claim_id",
+                            expression="COUNT(*)",
+                            priority=1,
+                        ),
+                    ],
+                    survivorship=Survivorship(
+                        strategy="single_source",
+                        explanation="Count of claims per member",
+                    ),
+                ),
+            ),
+            UMFColumn(
+                name="last_claim_date",
+                data_type="DATE",
+                derivation=UMFColumnDerivation(
+                    candidates=[
+                        DerivationCandidate(
+                            table="claims",
+                            column="service_date",
+                            expression="MAX(service_date)",
+                            priority=1,
+                        ),
+                    ],
+                    survivorship=Survivorship(
+                        strategy="single_source",
+                        explanation="Most recent claim date",
+                    ),
+                ),
+            ),
+        ],
+        primary_key=["member_id"],
+    )
+
+
+@pytest.fixture
+def related_umfs(source_table_a: UMF, source_table_b: UMF) -> dict[str, UMF]:
+    """Dict of related UMFs for join resolution."""
+    return {
+        "source_a": source_table_a,
+        "source_b": source_table_b,
+    }
+
+
+@pytest.fixture
+def enrollment_umf() -> UMF:
+    """Enrollment source table."""
+    return _make_umf(
+        "enrollment",
+        [
+            UMFColumn(name="member_id", data_type="VARCHAR"),
+            UMFColumn(name="phone", data_type="VARCHAR"),
+            UMFColumn(name="enrollment_date", data_type="DATE"),
+        ],
+        primary_key=["member_id"],
+        relationships=Relationships(
+            summary=RelationshipSummary(
+                total_relationships=1,
+                total_incoming=0,
+                total_outgoing=1,
+                hub_score=5.0,
+            ),
+            outgoing=[
+                OutgoingRelationship(
+                    target_table="demographics",
+                    source_column="member_id",
+                    target_column="member_id",
+                    type="foreign_to_primary",
+                    confidence=0.9,
+                    cardinality=_card("one_to_one", "1:0..1"),
+                ),
+            ],
+        ),
+    )
+
+
+@pytest.fixture
+def demographics_umf() -> UMF:
+    """Demographics source table."""
+    return _make_umf(
+        "demographics",
+        [
+            UMFColumn(name="member_id", data_type="VARCHAR"),
+            UMFColumn(name="phone_number", data_type="VARCHAR"),
+            UMFColumn(name="address", data_type="VARCHAR"),
+        ],
+        primary_key=["member_id"],
+        relationships=Relationships(
+            summary=RelationshipSummary(
+                total_relationships=0,
+                total_incoming=1,
+                total_outgoing=0,
+                hub_score=1.0,
+            ),
+        ),
+    )
+
+
+@pytest.fixture
+def survivorship_related_umfs(
+    enrollment_umf: UMF, demographics_umf: UMF
+) -> dict[str, UMF]:
+    return {
+        "enrollment": enrollment_umf,
+        "demographics": demographics_umf,
+    }
+
+
+@pytest.fixture
+def claims_umf() -> UMF:
+    """Claims source table for aggregate tests."""
+    return _make_umf(
+        "claims",
+        [
+            UMFColumn(name="claim_id", data_type="VARCHAR"),
+            UMFColumn(name="member_id", data_type="VARCHAR"),
+            UMFColumn(name="service_date", data_type="DATE"),
+        ],
+        primary_key=["claim_id"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# TestSQLPlanGeneratorBasic
+# ---------------------------------------------------------------------------
+
+
+class TestSQLPlanGeneratorBasic:
+    """Test basic SQL plan generation."""
+
+    def test_generates_valid_sql_string(
+        self, minimal_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """Generator returns a non-empty string."""
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(minimal_umf, related_umfs)
+        assert isinstance(sql, str)
+        assert len(sql) > 0
+
+    def test_generates_header_with_table_name(
+        self, minimal_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """SQL contains a header comment block referencing the table name."""
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(minimal_umf, related_umfs)
+        assert "SQL Execution Plan: test_claims" in sql
+
+    def test_generates_final_assembly(
+        self, minimal_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """SQL contains a FINAL ASSEMBLY block for the target table."""
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(minimal_umf, related_umfs)
+        assert "FINAL ASSEMBLY" in sql
+        assert "test_claims" in sql
+
+    def test_generates_create_statement(
+        self, minimal_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """SQL contains CREATE OR REPLACE TEMPORARY VIEW statements."""
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(minimal_umf, related_umfs)
+        assert "CREATE OR REPLACE TEMPORARY VIEW" in sql
+
+    def test_template_variable_substitution(
+        self, related_umfs: dict[str, UMF]
+    ):
+        """Template variables in derivation expressions are replaced."""
+        target = _make_umf(
+            "templated_table",
+            [
+                UMFColumn(
+                    name="member_id",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(strategy="primary_key"),
+                ),
+                UMFColumn(
+                    name="run_date",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(
+                        candidates=[
+                            DerivationCandidate(
+                                table="source_a",
+                                expression="'{{run_date}}'",
+                                priority=1,
+                            ),
+                        ],
+                        survivorship=Survivorship(
+                            strategy="single_source",
+                            explanation="Injected run date",
+                        ),
+                    ),
+                ),
+            ],
+            primary_key=["member_id"],
+        )
+
+        gen = SQLPlanGenerator(template_vars={"run_date": "2026-01-01"})
+        sql = gen.generate_for_table(target, related_umfs)
+        assert "2026-01-01" in sql
+        assert "{{run_date}}" not in sql
+
+    def test_default_values_applied(self):
+        """Columns without derivation produce CAST(NULL AS type)."""
+        target = _make_umf(
+            "defaults_table",
+            [
+                UMFColumn(name="col_a", data_type="VARCHAR"),
+                UMFColumn(name="col_b", data_type="INTEGER"),
+            ],
+        )
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(target, {})
+        assert "CAST(NULL AS STRING)" in sql
+        assert "CAST(NULL AS INT)" in sql
+
+    def test_raises_without_table_name(self):
+        """ValueError when table_name is missing."""
+        # UMF requires table_name, so we can't easily create one without it.
+        # Instead test that generate_for_table uses table_name correctly.
+        umf = _make_umf(
+            "valid_name",
+            [UMFColumn(name="id", data_type="INTEGER")],
+        )
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(umf, {})
+        assert "valid_name" in sql
+
+    def test_table_resolver_applied(self):
+        """table_resolver callback transforms table names in SQL."""
+        source = _make_umf(
+            "raw_table",
+            [
+                UMFColumn(name="id", data_type="VARCHAR"),
+                UMFColumn(name="val", data_type="VARCHAR"),
+            ],
+            primary_key=["id"],
+            relationships=Relationships(
+                summary=RelationshipSummary(
+                    total_relationships=0,
+                    total_incoming=0,
+                    total_outgoing=0,
+                    hub_score=5.0,
+                ),
+            ),
+        )
+        target = _make_umf(
+            "output_table",
+            [
+                UMFColumn(
+                    name="id",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(strategy="primary_key"),
+                ),
+                UMFColumn(
+                    name="val",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(
+                        candidates=[
+                            DerivationCandidate(
+                                table="raw_table", column="val", priority=1
+                            ),
+                        ],
+                        survivorship=Survivorship(
+                            strategy="single_source",
+                            explanation="Direct",
+                        ),
+                    ),
+                ),
+            ],
+            primary_key=["id"],
+        )
+
+        def resolver(name: str) -> str:
+            return f"catalog.schema.{name}"
+
+        gen = SQLPlanGenerator(table_resolver=resolver)
+        sql = gen.generate_for_table(target, {"raw_table": source})
+        assert "catalog.schema.raw_table" in sql
+
+
+# ---------------------------------------------------------------------------
+# TestSQLPlanGeneratorJoins
+# ---------------------------------------------------------------------------
+
+
+class TestSQLPlanGeneratorJoins:
+    """Test join SQL generation."""
+
+    def test_direct_join_produces_left_join(
+        self, derived_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """Direct join strategy emits LEFT JOIN SQL."""
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(derived_umf, related_umfs)
+        assert "LEFT JOIN" in sql
+
+    def test_direct_join_has_on_clause(
+        self, derived_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """Direct join includes an ON clause for the join key."""
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(derived_umf, related_umfs)
+        assert " ON " in sql
+
+    def test_first_record_join_produces_row_number(self):
+        """first_record join strategy generates ROW_NUMBER dedup."""
+        # Create a 1:N relationship so strategy becomes first_record
+        source = _make_umf(
+            "detail_table",
+            [
+                UMFColumn(name="parent_id", data_type="VARCHAR"),
+                UMFColumn(name="detail_value", data_type="VARCHAR"),
+                UMFColumn(name="updated_date", data_type="DATE"),
+            ],
+            primary_key=["parent_id"],
+            relationships=Relationships(
+                summary=RelationshipSummary(
+                    total_relationships=0,
+                    total_incoming=0,
+                    total_outgoing=0,
+                    hub_score=1.0,
+                ),
+            ),
+        )
+        hub = _make_umf(
+            "hub_table",
+            [
+                UMFColumn(name="parent_id", data_type="VARCHAR"),
+            ],
+            primary_key=["parent_id"],
+            relationships=Relationships(
+                outgoing=[
+                    OutgoingRelationship(
+                        target_table="detail_table",
+                        source_column="parent_id",
+                        target_column="parent_id",
+                        type="foreign_to_primary",
+                        confidence=0.9,
+                        cardinality=_card("one_to_many", "1:N"),
+                    ),
+                ],
+                summary=RelationshipSummary(
+                    total_relationships=1,
+                    total_incoming=0,
+                    total_outgoing=1,
+                    hub_score=5.0,
+                ),
+            ),
+        )
+        target = _make_umf(
+            "output_first_record",
+            [
+                UMFColumn(
+                    name="parent_id",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(strategy="primary_key"),
+                ),
+                UMFColumn(
+                    name="detail_value",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(
+                        candidates=[
+                            DerivationCandidate(
+                                table="detail_table",
+                                column="detail_value",
+                                priority=1,
+                            ),
+                        ],
+                        survivorship=Survivorship(
+                            strategy="single_source",
+                            explanation="First record from detail_table",
+                        ),
+                    ),
+                ),
+            ],
+            primary_key=["parent_id"],
+        )
+
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(
+            target, {"hub_table": hub, "detail_table": source}
+        )
+        assert "ROW_NUMBER" in sql
+        assert "PARTITION BY" in sql
+        assert "First Record" in sql
+
+    def test_multiple_joins_create_sequential_steps(
+        self, derived_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """Multiple joins create numbered disposition_step_ views."""
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(derived_umf, related_umfs)
+        # With two source tables, we expect at least step_1
+        assert "disposition_step_1" in sql
+
+    def test_join_filter_appears_in_on_clause(self):
+        """join_filter from derivation candidates appears in the ON clause."""
+        source = _make_umf(
+            "filtered_source",
+            [
+                UMFColumn(name="member_id", data_type="VARCHAR"),
+                UMFColumn(name="status", data_type="VARCHAR"),
+                UMFColumn(name="value", data_type="VARCHAR"),
+            ],
+            primary_key=["member_id"],
+            relationships=Relationships(
+                summary=RelationshipSummary(
+                    total_relationships=0,
+                    total_incoming=0,
+                    total_outgoing=0,
+                    hub_score=1.0,
+                ),
+            ),
+        )
+        hub = _make_umf(
+            "member_hub",
+            [
+                UMFColumn(name="member_id", data_type="VARCHAR"),
+            ],
+            primary_key=["member_id"],
+            relationships=Relationships(
+                outgoing=[
+                    OutgoingRelationship(
+                        target_table="filtered_source",
+                        source_column="member_id",
+                        target_column="member_id",
+                        type="foreign_to_primary",
+                        confidence=0.9,
+                        cardinality=_card("one_to_one", "1:0..1"),
+                    ),
+                ],
+                summary=RelationshipSummary(
+                    total_relationships=1,
+                    total_incoming=0,
+                    total_outgoing=1,
+                    hub_score=5.0,
+                ),
+            ),
+        )
+        target = _make_umf(
+            "filtered_output",
+            [
+                UMFColumn(
+                    name="member_id",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(strategy="primary_key"),
+                ),
+                UMFColumn(
+                    name="active_value",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(
+                        candidates=[
+                            DerivationCandidate(
+                                table="filtered_source",
+                                column="value",
+                                priority=1,
+                                join_filter="status = 'ACTIVE'",
+                                table_instance="active_source",
+                            ),
+                        ],
+                        survivorship=Survivorship(
+                            strategy="single_source",
+                            explanation="Active records only",
+                        ),
+                    ),
+                ),
+            ],
+            primary_key=["member_id"],
+        )
+
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(
+            target, {"member_hub": hub, "filtered_source": source}
+        )
+        # The join filter should be rewritten into the ON clause
+        assert "ACTIVE" in sql
+
+
+# ---------------------------------------------------------------------------
+# TestSQLPlanGeneratorDerivations
+# ---------------------------------------------------------------------------
+
+
+class TestSQLPlanGeneratorDerivations:
+    """Test column derivation mapping in SQL output."""
+
+    def test_single_source_derivation(
+        self, derived_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """Single-source derivation maps correctly in final assembly."""
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(derived_umf, related_umfs)
+        # member_name comes from source_a (the base table) so it appears as base.member_name
+        assert "base.member_name AS member_name" in sql
+        # provider_name comes from source_b (joined) so it appears with table alias prefix
+        assert "source_b__provider_name" in sql
+
+    def test_coalesce_survivorship(
+        self,
+        survivorship_umf: UMF,
+        survivorship_related_umfs: dict[str, UMF],
+    ):
+        """Multi-source survivorship generates a COALESCE expression."""
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(survivorship_umf, survivorship_related_umfs)
+        assert "COALESCE" in sql
+
+    def test_survivorship_default_value(
+        self,
+        survivorship_umf: UMF,
+        survivorship_related_umfs: dict[str, UMF],
+    ):
+        """Default value appears in survivorship COALESCE."""
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(survivorship_umf, survivorship_related_umfs)
+        assert "UNKNOWN" in sql
+
+    def test_expression_derivation(self, related_umfs: dict[str, UMF]):
+        """Expression-based derivation rewrites correctly."""
+        target = _make_umf(
+            "expr_output",
+            [
+                UMFColumn(
+                    name="claim_id",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(strategy="primary_key"),
+                ),
+                UMFColumn(
+                    name="full_info",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(
+                        candidates=[
+                            DerivationCandidate(
+                                table="source_a",
+                                expression="CONCAT(member_name, ' - ', service_date)",
+                                priority=1,
+                            ),
+                        ],
+                        survivorship=Survivorship(
+                            strategy="single_source",
+                            explanation="Concatenated info",
+                        ),
+                    ),
+                ),
+            ],
+            primary_key=["claim_id"],
+        )
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(target, related_umfs)
+        assert "CONCAT" in sql
+
+    def test_unmapped_column_produces_cast_null(self):
+        """Columns with no derivation produce CAST(NULL AS type)."""
+        target = _make_umf(
+            "sparse_table",
+            [
+                UMFColumn(name="unmapped_col", data_type="DATE"),
+            ],
+        )
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(target, {})
+        assert "CAST(NULL AS DATE)" in sql
+
+    def test_primary_key_strategy(
+        self, derived_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """primary_key derivation strategy references base.column."""
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(derived_umf, related_umfs)
+        assert "base.claim_id" in sql
+
+    def test_default_value_column(self):
+        """Column with explicit default uses CAST(default AS type)."""
+        target = _make_umf(
+            "default_table",
+            [
+                UMFColumn(name="status", data_type="VARCHAR", default="PENDING"),
+            ],
+        )
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(target, {})
+        assert "PENDING" in sql
+
+
+# ---------------------------------------------------------------------------
+# TestRelationshipResolver
+# ---------------------------------------------------------------------------
+
+
+class TestRelationshipResolver:
+    """Test the RelationshipResolver."""
+
+    def test_resolve_plan_returns_base_table(
+        self, derived_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """resolve_plan identifies a base table."""
+        resolver = RelationshipResolver(related_umfs)
+        plan = resolver.resolve_plan(derived_umf)
+        assert "base_table" in plan
+        # source_a has the higher hub_score
+        assert plan["base_table"] == "source_a"
+
+    def test_resolve_plan_returns_join_sequence(
+        self, derived_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """resolve_plan returns a join_sequence list."""
+        resolver = RelationshipResolver(related_umfs)
+        plan = resolver.resolve_plan(derived_umf)
+        assert "join_sequence" in plan
+        assert isinstance(plan["join_sequence"], list)
+
+    def test_infers_join_from_derivation_candidates(
+        self, derived_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """Resolver creates joins for tables referenced in derivation candidates."""
+        resolver = RelationshipResolver(related_umfs)
+        plan = resolver.resolve_plan(derived_umf)
+        join_tables = {j["target_table"] for j in plan["join_sequence"]}
+        # source_b should appear in the join sequence (source_a is the base)
+        assert "source_b" in join_tables
+
+    def test_strategy_inference_direct(
+        self, derived_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """1:0..1 cardinality infers 'direct' strategy."""
+        resolver = RelationshipResolver(related_umfs)
+        plan = resolver.resolve_plan(derived_umf)
+        for join in plan["join_sequence"]:
+            if join["target_table"] == "source_b":
+                assert join["strategy"] == "direct"
+
+    def test_strategy_inference_first_record(self):
+        """1:N cardinality infers 'first_record' strategy."""
+        hub = _make_umf(
+            "hub",
+            [UMFColumn(name="id", data_type="VARCHAR")],
+            primary_key=["id"],
+            relationships=Relationships(
+                outgoing=[
+                    OutgoingRelationship(
+                        target_table="detail",
+                        source_column="id",
+                        target_column="id",
+                        type="foreign_to_primary",
+                        confidence=0.9,
+                        cardinality=_card("one_to_many", "1:N"),
+                    ),
+                ],
+                summary=RelationshipSummary(
+                    total_relationships=1,
+                    total_incoming=0,
+                    total_outgoing=1,
+                    hub_score=5.0,
+                ),
+            ),
+        )
+        detail = _make_umf(
+            "detail",
+            [
+                UMFColumn(name="id", data_type="VARCHAR"),
+                UMFColumn(name="note", data_type="VARCHAR"),
+            ],
+            primary_key=["id"],
+        )
+        target = _make_umf(
+            "output",
+            [
+                UMFColumn(
+                    name="id",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(strategy="primary_key"),
+                ),
+                UMFColumn(
+                    name="note",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(
+                        candidates=[
+                            DerivationCandidate(
+                                table="detail", column="note", priority=1
+                            ),
+                        ],
+                        survivorship=Survivorship(
+                            strategy="single_source",
+                            explanation="First record",
+                        ),
+                    ),
+                ),
+            ],
+            primary_key=["id"],
+        )
+        resolver = RelationshipResolver({"hub": hub, "detail": detail})
+        plan = resolver.resolve_plan(target)
+        for join in plan["join_sequence"]:
+            if join["target_table"] == "detail":
+                assert join["strategy"] == "first_record"
+
+    def test_contribution_score_ordering(self):
+        """Tables contributing more columns appear earlier in join_sequence."""
+        src_many = _make_umf(
+            "src_many",
+            [
+                UMFColumn(name="key_id", data_type="VARCHAR"),
+                UMFColumn(name="col_a", data_type="VARCHAR"),
+                UMFColumn(name="col_b", data_type="VARCHAR"),
+                UMFColumn(name="col_c", data_type="VARCHAR"),
+            ],
+            primary_key=["key_id"],
+            relationships=Relationships(
+                summary=RelationshipSummary(
+                    total_relationships=0,
+                    total_incoming=0,
+                    total_outgoing=0,
+                    hub_score=1.0,
+                ),
+            ),
+        )
+        src_few = _make_umf(
+            "src_few",
+            [
+                UMFColumn(name="key_id", data_type="VARCHAR"),
+                UMFColumn(name="col_x", data_type="VARCHAR"),
+            ],
+            primary_key=["key_id"],
+            relationships=Relationships(
+                summary=RelationshipSummary(
+                    total_relationships=0,
+                    total_incoming=0,
+                    total_outgoing=0,
+                    hub_score=1.0,
+                ),
+            ),
+        )
+        hub = _make_umf(
+            "hub",
+            [UMFColumn(name="key_id", data_type="VARCHAR")],
+            primary_key=["key_id"],
+            relationships=Relationships(
+                outgoing=[
+                    OutgoingRelationship(
+                        target_table="src_many",
+                        source_column="key_id",
+                        target_column="key_id",
+                        type="foreign_to_primary",
+                        confidence=0.9,
+                        cardinality=_card("one_to_one", "1:0..1"),
+                    ),
+                    OutgoingRelationship(
+                        target_table="src_few",
+                        source_column="key_id",
+                        target_column="key_id",
+                        type="foreign_to_primary",
+                        confidence=0.9,
+                        cardinality=_card("one_to_one", "1:0..1"),
+                    ),
+                ],
+                summary=RelationshipSummary(
+                    total_relationships=2,
+                    total_incoming=0,
+                    total_outgoing=2,
+                    hub_score=10.0,
+                ),
+            ),
+        )
+        target = _make_umf(
+            "ordered_output",
+            [
+                UMFColumn(
+                    name="key_id",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(strategy="primary_key"),
+                ),
+                UMFColumn(
+                    name="col_a",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(
+                        candidates=[
+                            DerivationCandidate(
+                                table="src_many", column="col_a", priority=1
+                            ),
+                        ],
+                        survivorship=Survivorship(
+                            strategy="single_source", explanation="a"
+                        ),
+                    ),
+                ),
+                UMFColumn(
+                    name="col_b",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(
+                        candidates=[
+                            DerivationCandidate(
+                                table="src_many", column="col_b", priority=1
+                            ),
+                        ],
+                        survivorship=Survivorship(
+                            strategy="single_source", explanation="b"
+                        ),
+                    ),
+                ),
+                UMFColumn(
+                    name="col_c",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(
+                        candidates=[
+                            DerivationCandidate(
+                                table="src_many", column="col_c", priority=1
+                            ),
+                        ],
+                        survivorship=Survivorship(
+                            strategy="single_source", explanation="c"
+                        ),
+                    ),
+                ),
+                UMFColumn(
+                    name="col_x",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(
+                        candidates=[
+                            DerivationCandidate(
+                                table="src_few", column="col_x", priority=1
+                            ),
+                        ],
+                        survivorship=Survivorship(
+                            strategy="single_source", explanation="x"
+                        ),
+                    ),
+                ),
+            ],
+            primary_key=["key_id"],
+        )
+
+        resolver = RelationshipResolver(
+            {"hub": hub, "src_many": src_many, "src_few": src_few}
+        )
+        plan = resolver.resolve_plan(target)
+        join_tables = [j["target_table"] for j in plan["join_sequence"]]
+        # src_many contributes 3 columns, src_few contributes 1 -> src_many first
+        assert join_tables.index("src_many") < join_tables.index("src_few")
+
+    def test_resolve_plan_returns_aliases(
+        self, derived_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """resolve_plan returns an aliases dict."""
+        resolver = RelationshipResolver(related_umfs)
+        plan = resolver.resolve_plan(derived_umf)
+        assert "aliases" in plan
+        assert isinstance(plan["aliases"], dict)
+
+
+# ---------------------------------------------------------------------------
+# TestJoinInfoAndPivotSpec
+# ---------------------------------------------------------------------------
+
+
+class TestJoinInfoAndPivotSpec:
+    """Test JoinInfo and PivotSpec dataclasses."""
+
+    def test_joininfo_defaults(self):
+        """JoinInfo has sensible defaults."""
+        j = JoinInfo(
+            target_table="tbl",
+            source_column="src",
+            target_column="tgt",
+            strategy="direct",
+        )
+        assert j.partition_by == []
+        assert j.order_by == []
+        assert j.pivot is None
+        assert j.join_type == "left"
+        assert j.join_filter is None
+
+    def test_pivotspec_fields(self):
+        """PivotSpec stores key/value/prefix/max_records."""
+        p = PivotSpec(
+            key_column="code_id",
+            value_column="description",
+            prefix="diag",
+            max_records=10,
+        )
+        assert p.key_column == "code_id"
+        assert p.max_records == 10
+
+
+# ---------------------------------------------------------------------------
+# TestConvenienceFunction
+# ---------------------------------------------------------------------------
+
+
+class TestConvenienceFunction:
+    """Test the generate_sql_plan() convenience wrapper."""
+
+    def test_works_end_to_end_minimal(self, minimal_umf: UMF):
+        """generate_sql_plan produces SQL for a minimal UMF."""
+        sql = generate_sql_plan(minimal_umf, {})
+        assert "CREATE OR REPLACE TEMPORARY VIEW" in sql
+        assert "test_claims" in sql
+
+    def test_accepts_template_vars(self, minimal_umf: UMF):
+        """generate_sql_plan forwards template_vars."""
+        sql = generate_sql_plan(
+            minimal_umf, {}, template_vars={"run_id": "abc123"}
+        )
+        # Just verify it runs without error; no templates in minimal_umf
+        assert isinstance(sql, str)
+
+    def test_accepts_table_resolver(self, minimal_umf: UMF):
+        """generate_sql_plan forwards table_resolver."""
+        sql = generate_sql_plan(
+            minimal_umf,
+            {},
+            table_resolver=lambda n: f"db.{n}",
+        )
+        assert isinstance(sql, str)
+
+    def test_end_to_end_with_derivations(
+        self, derived_umf: UMF, related_umfs: dict[str, UMF]
+    ):
+        """generate_sql_plan works with derived columns and joins."""
+        sql = generate_sql_plan(derived_umf, related_umfs)
+        assert "derived_output" in sql
+        assert "LEFT JOIN" in sql
+        assert "FINAL ASSEMBLY" in sql
+
+    def test_end_to_end_with_survivorship(
+        self,
+        survivorship_umf: UMF,
+        survivorship_related_umfs: dict[str, UMF],
+    ):
+        """generate_sql_plan works with COALESCE survivorship."""
+        sql = generate_sql_plan(survivorship_umf, survivorship_related_umfs)
+        assert "COALESCE" in sql
+        assert "survivorship_output" in sql

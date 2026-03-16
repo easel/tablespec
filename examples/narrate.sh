@@ -41,6 +41,7 @@ gen_clip "domains"  "42 domain types ship built in. Feed it a column name like p
 gen_clip "gx"       "Generate a full Great Expectations suite deterministically from metadata alone. 13 expectations covering column existence, types, nullability, and length constraints."
 gen_clip "prompts"  "Generate structured prompts for LLMs. Documentation prompts. Validation rule prompts. All the column metadata and domain context is included automatically."
 gen_clip "diff"     "Schema evolution tracking. Modify a table and see exactly what changed. Added columns. Modified descriptions."
+gen_clip "sql_plan" "Generate full SQL execution plans from UMF metadata. Joins, column derivations, survivorship logic, aggregations. All computed automatically from the schema relationships."
 gen_clip "spark"    "Now the PySpark features. Starting a Spark session. Creating DataFrames. Profiling schemas. Validating data against UMF specs. And generating sample data. All from the same UMF metadata."
 gen_clip "close"    "That's tablespec. Define once. Use everywhere."
 
@@ -59,6 +60,7 @@ CLIP_domains=${CLIP_DUR[domains]}
 CLIP_gx=${CLIP_DUR[gx]}
 CLIP_prompts=${CLIP_DUR[prompts]}
 CLIP_diff=${CLIP_DUR[diff]}
+CLIP_sql_plan=${CLIP_DUR[sql_plan]}
 CLIP_spark=${CLIP_DUR[spark]}
 CLIP_close=${CLIP_DUR[close]}
 EOF
