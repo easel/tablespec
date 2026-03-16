@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.no_spark
+
 
 class TestExpectationConsistency:
     """Test consistency across expectation configuration files."""
@@ -34,11 +36,7 @@ class TestExpectationConsistency:
     @pytest.fixture
     def valid_expectation_types(self, gx_schema: dict) -> set[str]:
         """Extract set of valid expectation types from GX schema."""
-        return set(
-            gx_schema["properties"]["expectations"]["items"]["properties"]["type"][
-                "enum"
-            ]
-        )
+        return set(gx_schema["properties"]["expectations"]["items"]["properties"]["type"]["enum"])
 
     @pytest.fixture
     def expectation_categories(self, schemas_dir: Path) -> dict:
@@ -134,9 +132,7 @@ class TestExpectationConsistency:
             if isinstance(category_data, dict) and "expectations" in category_data:
                 for exp_type in category_data["expectations"]:
                     if exp_type in known_invalid_types:
-                        found_invalid.append(
-                            {"category": category_name, "type": exp_type}
-                        )
+                        found_invalid.append({"category": category_name, "type": exp_type})
 
         if found_invalid:
             print("\n❌ Known invalid expectation types found in categories:")
@@ -170,9 +166,7 @@ class TestExpectationConsistency:
                 invalid_types.append({"context": "column", "type": exp_type})
 
         if invalid_types:
-            print(
-                "\n❌ Invalid expectation types from get_llm_generatable_expectations():"
-            )
+            print("\n❌ Invalid expectation types from get_llm_generatable_expectations():")
             for item in invalid_types:
                 print(f"  Context '{item['context']}': {item['type']}")
 
@@ -193,9 +187,7 @@ class TestExpectationConsistency:
                 invalid_types.append(exp_type)
 
         if invalid_types:
-            print(
-                "\n❌ Invalid expectation types from get_baseline_only_expectations():"
-            )
+            print("\n❌ Invalid expectation types from get_baseline_only_expectations():")
             for exp_type in invalid_types:
                 print(f"  {exp_type}")
 
@@ -293,9 +285,7 @@ class TestExpectationConsistency:
             print("\n❌ Parameter documentation for types not in GX schema:")
             for exp_type in sorted(extra_docs):
                 print(f"  {exp_type}")
-            print(
-                "\nThese types should either be added to the schema or removed from parameters."
-            )
+            print("\nThese types should either be added to the schema or removed from parameters.")
 
         assert len(extra_docs) == 0, (
             f"Found {len(extra_docs)} documented expectation types that are not in the GX schema"

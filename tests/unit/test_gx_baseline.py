@@ -87,8 +87,10 @@ class TestBaselineExpectationGenerator:
             minimal_umf, include_structural=False
         )
 
-        # Should only have column expectations (2 columns * 2 expectations each)
-        assert len(expectations) == 4
+        # Should only have column expectations:
+        # - id (IntegerType): existence, be_of_type, cast_to_type (3)
+        # - name (StringType): existence, be_of_type (2)
+        assert len(expectations) == 5
 
         # Check no structural expectations
         exp_types = [exp["type"] for exp in expectations]

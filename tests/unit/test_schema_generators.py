@@ -12,6 +12,8 @@ from tablespec.schemas.generators import (
     generate_sql_ddl,
 )
 
+pytestmark = pytest.mark.no_spark
+
 
 class TestGenerateSQLDDL:
     """Test SQL DDL generation from UMF."""
@@ -25,7 +27,7 @@ class TestGenerateSQLDDL:
                 {"name": "id", "data_type": "INTEGER", "nullable": False},
                 {
                     "name": "name",
-                    "data_type": "VARCHAR",
+                    "data_type": "STRING",
                     "max_length": 100,
                     "nullable": True,
                 },
@@ -47,7 +49,7 @@ class TestGenerateSQLDDL:
                 },
                 {
                     "name": "customer_name",
-                    "data_type": "VARCHAR",
+                    "data_type": "STRING",
                     "max_length": 255,
                     "nullable": False,
                     "description": "Customer's full name",
@@ -62,7 +64,7 @@ class TestGenerateSQLDDL:
                 },
                 {
                     "name": "created_at",
-                    "data_type": "TIMESTAMP",
+                    "data_type": "TimestampType",
                     "nullable": False,
                 },
             ],
@@ -80,7 +82,7 @@ class TestGenerateSQLDDL:
 
         assert "CREATE TABLE test_table" in ddl
         assert "id INTEGER NOT NULL" in ddl
-        assert "name VARCHAR(100)" in ddl
+        assert "name STRING" in ddl
         assert ddl.endswith(";")
 
     def test_includes_table_name(self, minimal_umf):
@@ -93,25 +95,19 @@ class TestGenerateSQLDDL:
         ddl = generate_sql_ddl(minimal_umf)
         assert "-- DDL for test_table" in ddl
         assert "-- Generated from UMF specification" in ddl
-        assert "-- Source file modified:" in ddl
 
     def test_handles_nullable_columns(self, minimal_umf):
         """Test nullable vs NOT NULL columns."""
         ddl = generate_sql_ddl(minimal_umf)
         assert "id INTEGER NOT NULL" in ddl
         # name is nullable, should not have NOT NULL
-        assert "name VARCHAR(100) NOT NULL" not in ddl
+        assert "name STRING NOT NULL" not in ddl
 
-    def test_varchar_with_max_length(self, minimal_umf):
-        """Test VARCHAR includes max_length."""
-        ddl = generate_sql_ddl(minimal_umf)
-        assert "VARCHAR(100)" in ddl
-
-    def test_varchar_without_length_becomes_string(self):
-        """Test VARCHAR without length becomes STRING."""
+    def test_string_without_length_defaults_to_string(self):
+        """Test STRING column renders as STRING when no length provided."""
         umf = {
             "table_name": "test",
-            "columns": [{"name": "text_col", "data_type": "VARCHAR"}],
+            "columns": [{"name": "text_col", "data_type": "STRING"}],
         }
         ddl = generate_sql_ddl(umf)
         assert "text_col STRING" in ddl
@@ -136,9 +132,7 @@ class TestGenerateSQLDDL:
         """Test suggested indexes are generated."""
         ddl = generate_sql_ddl(full_umf)
         assert "-- Suggested Indexes" in ddl
-        assert (
-            "CREATE INDEX idx_customer_name ON customer_table (customer_name);" in ddl
-        )
+        assert "CREATE INDEX idx_customer_name ON customer_table (customer_name);" in ddl
         assert "CREATE INDEX idx_created_at ON customer_table (created_at);" in ddl
 
     def test_no_indexes_when_not_present(self, minimal_umf):
@@ -154,7 +148,7 @@ class TestGenerateSQLDDL:
             "columns": [
                 {
                     "name": "col1",
-                    "data_type": "VARCHAR",
+                    "data_type": "STRING",
                     "max_length": 50,
                     "description": "Column with 'quotes'",
                 }
@@ -164,6 +158,52 @@ class TestGenerateSQLDDL:
         assert "Table with ''quoted'' text" in ddl
         assert "Column with ''quotes''" in ddl
 
+    def test_ddl_is_valid_sql(self):
+        """Test that generated DDL uses correct UMF types."""
+        umf = {
+            "table_name": "test_types",
+            "description": "Test all UMF type mappings to SQL",
+            "columns": [
+                {"name": "str_col", "data_type": "VARCHAR", "nullable": False},
+                {"name": "int_col", "data_type": "INTEGER", "nullable": True},
+                {"name": "datetime_col", "data_type": "DATETIME", "nullable": False},
+                {"name": "date_col", "data_type": "DATE", "nullable": True},
+                {"name": "bool_col", "data_type": "BOOLEAN", "nullable": True},
+                {"name": "float_col", "data_type": "FLOAT", "nullable": True},
+                {"name": "decimal_col", "data_type": "DECIMAL", "precision": 10, "scale": 2},
+            ],
+        }
+        ddl = generate_sql_ddl(umf)
+
+        # Verify correct SQL types are present
+        assert "STRING" in ddl, f"Expected STRING type in DDL (from VARCHAR): {ddl}"
+        assert "INTEGER" in ddl, f"Expected INTEGER type in DDL: {ddl}"
+        assert "DATETIME" in ddl, f"Expected DATETIME type in DDL: {ddl}"
+        assert "DATE" in ddl, f"Expected DATE type in DDL: {ddl}"
+        assert "DECIMAL(10,2)" in ddl, f"Expected DECIMAL(10,2) in DDL: {ddl}"
+
+    def test_ddl_is_parseable_by_sqlglot(self):
+        """Test that generated DDL is parseable by sqlglot."""
+        sqlglot = pytest.importorskip("sqlglot")
+
+        umf = {
+            "table_name": "test_types",
+            "description": "Test all UMF type mappings to SQL",
+            "columns": [
+                {"name": "str_col", "data_type": "VARCHAR", "nullable": False},
+                {"name": "int_col", "data_type": "INTEGER", "nullable": True},
+                {"name": "datetime_col", "data_type": "DATETIME", "nullable": False},
+                {"name": "date_col", "data_type": "DATE", "nullable": True},
+                {"name": "bool_col", "data_type": "BOOLEAN", "nullable": True},
+                {"name": "float_col", "data_type": "FLOAT", "nullable": True},
+                {"name": "decimal_col", "data_type": "DECIMAL", "precision": 10, "scale": 2},
+            ],
+        }
+        ddl = generate_sql_ddl(umf)
+        parsed = sqlglot.parse(ddl, read="databricks")
+        assert len(parsed) >= 1, "DDL should parse to at least one statement"
+        assert parsed[0] is not None, "Parsed statement should not be None"
+
 
 class TestGeneratePySparkSchema:
     """Test PySpark schema generation from UMF."""
@@ -172,10 +212,11 @@ class TestGeneratePySparkSchema:
     def minimal_umf(self):
         """Minimal UMF data for testing."""
         return {
-            "table_name": "TestTable",
+            "table_name": "test_table",
+            "canonical_name": "TestTable",
             "columns": [
                 {"name": "id", "data_type": "INTEGER", "nullable": False},
-                {"name": "name", "data_type": "VARCHAR", "nullable": True},
+                {"name": "name", "data_type": "STRING", "nullable": True},
             ],
         }
 
@@ -183,17 +224,18 @@ class TestGeneratePySparkSchema:
     def full_umf(self):
         """UMF with all data types."""
         return {
-            "table_name": "AllTypes",
+            "table_name": "all_types",
+            "canonical_name": "AllTypes",
             "columns": [
-                {"name": "str_col", "data_type": "VARCHAR"},
+                {"name": "str_col", "data_type": "STRING"},
                 {"name": "int_col", "data_type": "INTEGER"},
                 {"name": "long_col", "data_type": "BIGINT"},
                 {"name": "float_col", "data_type": "FLOAT"},
                 {"name": "double_col", "data_type": "DOUBLE"},
                 {"name": "decimal_col", "data_type": "DECIMAL"},
                 {"name": "bool_col", "data_type": "BOOLEAN"},
-                {"name": "date_col", "data_type": "DATE"},
-                {"name": "timestamp_col", "data_type": "TIMESTAMP"},
+                {"name": "date_col", "data_type": "DateType"},
+                {"name": "timestamp_col", "data_type": "TimestampType"},
             ],
         }
 
@@ -202,7 +244,7 @@ class TestGeneratePySparkSchema:
         schema = generate_pyspark_schema(minimal_umf)
 
         assert "from pyspark.sql.types import StructType, StructField" in schema
-        assert "testtable_schema = StructType([" in schema
+        assert "test_table_schema = StructType([" in schema
         assert 'StructField("id", IntegerType(), False)' in schema
         assert 'StructField("name", StringType(), True)' in schema
 
@@ -211,14 +253,12 @@ class TestGeneratePySparkSchema:
         schema = generate_pyspark_schema(minimal_umf)
         assert "# PySpark Schema for TestTable" in schema
         assert "# Generated from UMF specification" in schema
-        assert "# Source file modified:" in schema
 
     def test_imports_all_types(self, minimal_umf):
         """Test all PySpark type imports are included."""
         schema = generate_pyspark_schema(minimal_umf)
         assert (
-            "from pyspark.sql.types import StringType, IntegerType, LongType, DecimalType"
-            in schema
+            "from pyspark.sql.types import StringType, IntegerType, LongType, DecimalType" in schema
         )
         assert (
             "from pyspark.sql.types import FloatType, DoubleType, BooleanType, DateType, TimestampType"
@@ -228,7 +268,7 @@ class TestGeneratePySparkSchema:
     def test_schema_variable_name(self, minimal_umf):
         """Test schema variable name is lowercase table name."""
         schema = generate_pyspark_schema(minimal_umf)
-        assert "testtable_schema = StructType([" in schema
+        assert "test_table_schema = StructType([" in schema
 
     def test_handles_nullable_correctly(self, minimal_umf):
         """Test nullable flag is correctly set."""
@@ -257,11 +297,7 @@ class TestGeneratePySparkSchema:
 
         # Should have 9 StructField definitions in fields + 1 in import = 10
         # Just check that we have the right number of field definitions (9)
-        lines = [
-            line
-            for line in schema.split("\n")
-            if line.strip().startswith('StructField("')
-        ]
+        lines = [line for line in schema.split("\n") if line.strip().startswith('StructField("')]
         assert len(lines) == 9
 
     def test_proper_formatting(self, minimal_umf):
@@ -286,7 +322,7 @@ class TestGenerateJSONSchema:
             "table_name": "test_table",
             "columns": [
                 {"name": "id", "data_type": "INTEGER", "nullable": False},
-                {"name": "name", "data_type": "VARCHAR", "nullable": True},
+                {"name": "name", "data_type": "STRING", "nullable": True},
             ],
         }
 
@@ -305,7 +341,7 @@ class TestGenerateJSONSchema:
                 },
                 {
                     "name": "email",
-                    "data_type": "VARCHAR",
+                    "data_type": "STRING",
                     "max_length": 255,
                     "nullable": True,
                     "description": "Customer email address",
@@ -354,9 +390,7 @@ class TestGenerateJSONSchema:
         """Test column descriptions are included."""
         schema = generate_json_schema(full_umf)
 
-        assert (
-            schema["properties"]["customer_id"]["description"] == "Unique customer ID"
-        )
+        assert schema["properties"]["customer_id"]["description"] == "Unique customer ID"
         assert schema["properties"]["email"]["description"] == "Customer email address"
 
     def test_required_fields(self, full_umf):
@@ -400,12 +434,12 @@ class TestGenerateJSONSchema:
         umf = {
             "table_name": "types_test",
             "columns": [
-                {"name": "str_col", "data_type": "VARCHAR"},
+                {"name": "str_col", "data_type": "STRING"},
                 {"name": "int_col", "data_type": "INTEGER"},
                 {"name": "decimal_col", "data_type": "DECIMAL"},
                 {"name": "float_col", "data_type": "FLOAT"},
                 {"name": "bool_col", "data_type": "BOOLEAN"},
-                {"name": "date_col", "data_type": "DATE"},
+                {"name": "date_col", "data_type": "DateType"},
             ],
         }
 
@@ -423,7 +457,7 @@ class TestGenerateJSONSchema:
         umf = {
             "table_name": "test",
             "columns": [
-                {"name": "col1", "data_type": "VARCHAR", "nullable": True},
+                {"name": "col1", "data_type": "STRING", "nullable": True},
                 {"name": "col2", "data_type": "INTEGER", "nullable": True},
             ],
         }

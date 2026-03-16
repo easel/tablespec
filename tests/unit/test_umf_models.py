@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-
-import pytest
 from pydantic import ValidationError
+import pytest
 
 from tablespec.models.umf import (
+    UMF,
+    DerivationCandidate,
     ForeignKey,
     Nullable,
-    UMF,
+    Survivorship,
     UMFColumn,
-    ValidationRule,
+    UMFColumnDerivation,
 )
+
+pytestmark = pytest.mark.no_spark
 
 
 class TestNullable:
@@ -37,6 +40,83 @@ class TestNullable:
         nullable = Nullable(MD=False, MP=None, ME=None)
         assert nullable.MD is False
         assert nullable.MP is None
+
+
+class TestDerivationCandidate:
+    """Test DerivationCandidate model."""
+
+    def test_creates_candidate(self):
+        """Test creating derivation candidate."""
+        candidate = DerivationCandidate(table="outreach_list", column="birth_date", priority=1)
+        assert candidate.table == "outreach_list"
+        assert candidate.column == "birth_date"
+        assert candidate.priority == 1
+
+    def test_validates_priority_positive(self):
+        """Test priority must be >= 1."""
+        with pytest.raises(ValidationError):
+            DerivationCandidate(table="test", column="col1", priority=0)
+
+
+class TestSurvivorship:
+    """Test Survivorship model."""
+
+    def test_creates_survivorship(self):
+        """Test creating survivorship strategy."""
+        survivorship = Survivorship(
+            strategy="highest_priority", explanation="Use value from highest priority source"
+        )
+        assert survivorship.strategy == "highest_priority"
+        assert survivorship.explanation == "Use value from highest priority source"
+
+    def test_allows_none_description(self):
+        """Test explanation is required."""
+        survivorship = Survivorship(strategy="most_recent", explanation="Use most recent value")
+        assert survivorship.strategy == "most_recent"
+        assert survivorship.explanation == "Use most recent value"
+
+
+class TestUMFColumnDerivation:
+    """Test UMFColumnDerivation model."""
+
+    def test_creates_derivation(self):
+        """Test creating column derivation."""
+        derivation = UMFColumnDerivation(
+            candidates=[
+                DerivationCandidate(table="source1", column="col1", priority=1),
+                DerivationCandidate(table="source2", column="col1", priority=2),
+            ],
+            survivorship=Survivorship(
+                strategy="highest_priority", explanation="Use first available value"
+            ),
+        )
+        assert len(derivation.candidates) == 2
+        assert derivation.candidates[0].priority == 1
+        assert derivation.survivorship.strategy == "highest_priority"
+
+    def test_requires_at_least_one_candidate(self):
+        """Test derivation must have at least one candidate."""
+        with pytest.raises(ValidationError):
+            UMFColumnDerivation(candidates=[])
+
+    def test_allows_none_survivorship(self):
+        """Test survivorship is optional."""
+        derivation = UMFColumnDerivation(
+            candidates=[DerivationCandidate(table="source1", column="col1", priority=1)]
+        )
+        assert len(derivation.candidates) == 1
+        assert derivation.survivorship is None
+
+    def test_allows_derivation_with_only_survivorship(self):
+        """Test derivation can have only survivorship without candidates (enterprise-only fields)."""
+        derivation = UMFColumnDerivation(
+            survivorship=Survivorship(
+                strategy="none",
+                explanation="Enterprise-only field with no source candidates",
+            )
+        )
+        assert derivation.candidates is None
+        assert derivation.survivorship.strategy == "none"
 
 
 class TestUMFColumn:
@@ -72,9 +152,9 @@ class TestUMFColumn:
             "DATE",
             "DATETIME",
             "BOOLEAN",
+            "FLOAT",
             "TEXT",
             "CHAR",
-            "FLOAT",
         ]
         for dtype in valid_types:
             col = UMFColumn(name="test", data_type=dtype)
@@ -105,13 +185,13 @@ class TestUMFColumn:
         assert col.nullable.MD is False
         assert len(col.notes) == 2
 
-    def test_varchar_with_length(self):
-        """Test VARCHAR column with length."""
+    def test_string_with_length(self):
+        """Test StringType column with length."""
         col = UMFColumn(name="name", data_type="VARCHAR", length=255)
         assert col.length == 255
 
     def test_decimal_with_precision_and_scale(self):
-        """Test DECIMAL column with precision and scale."""
+        """Test DecimalType column with precision and scale."""
         col = UMFColumn(name="amount", data_type="DECIMAL", precision=10, scale=2)
         assert col.precision == 10
         assert col.scale == 2
@@ -138,53 +218,84 @@ class TestUMFColumn:
         col = UMFColumn(name="test", data_type="DECIMAL", precision=10, scale=0)
         assert col.scale == 0
 
-
-class TestValidationRule:
-    """Test ValidationRule model."""
-
-    def test_creates_validation_rule(self):
-        """Test creating validation rule."""
-        rule = ValidationRule(
-            rule_type="uniqueness",
-            description="Column must be unique",
-            severity="error",
+    def test_column_with_derivation(self):
+        """Test column with derivation metadata."""
+        col = UMFColumn(
+            name="birth_date",
+            data_type="DATE",
+            derivation=UMFColumnDerivation(
+                candidates=[
+                    DerivationCandidate(table="outreach_list", column="birth_date", priority=1),
+                    DerivationCandidate(
+                        table="outreach_list_diags", column="birth_date", priority=2
+                    ),
+                ],
+                survivorship=Survivorship(
+                    strategy="highest_priority",
+                    explanation="Use DOB from outreach list; fallback to diags",
+                ),
+            ),
         )
+        assert col.name == "birth_date"
+        assert col.derivation is not None
+        assert len(col.derivation.candidates) == 2
+        assert col.derivation.candidates[0].table == "outreach_list"
+        assert col.derivation.survivorship.strategy == "highest_priority"
 
-        assert rule.rule_type == "uniqueness"
-        assert rule.description == "Column must be unique"
-        assert rule.severity == "error"
+    def test_column_with_provenance_and_pivot(self):
+        """Test column with provenance policy and pivot metadata."""
+        col = UMFColumn(
+            name="tgt_qlty_gap1",
+            data_type="VARCHAR",
+            length=15,
+            provenance_policy="outreach_only",
+            provenance_notes="Quality gaps only tracked in outreach files",
+            pivot_field=True,
+            pivot_index=1,
+            pivot_max_count=6,
+            pivot_source_table="outreach_list_gaps",
+            pivot_source_column="quality_gap_group",
+        )
+        assert col.name == "tgt_qlty_gap1"
+        assert col.provenance_policy == "outreach_only"
+        assert col.provenance_notes == "Quality gaps only tracked in outreach files"
+        assert col.pivot_field is True
+        assert col.pivot_index == 1
+        assert col.pivot_max_count == 6
+        assert col.pivot_source_table == "outreach_list_gaps"
+        assert col.pivot_source_column == "quality_gap_group"
 
-    def test_validates_severity_enum(self):
-        """Test severity must be valid value."""
-        valid_severities = ["error", "warning", "info"]
-        for severity in valid_severities:
-            rule = ValidationRule(
-                rule_type="test",
-                description="Test rule",
-                severity=severity,
-            )
-            assert rule.severity == severity
+    def test_validates_provenance_policy_enum(self):
+        """Test provenance_policy must be valid enum value."""
+        valid_policies = [
+            "enterprise_only",
+            "enterprise_preferred",
+            "outreach_only",
+            "survivorship",
+        ]
+        for policy in valid_policies:
+            col = UMFColumn(name="test", data_type="VARCHAR", provenance_policy=policy)
+            assert col.provenance_policy == policy
 
-    def test_rejects_invalid_severity(self):
-        """Test invalid severity is rejected."""
+        # Invalid policy should fail
         with pytest.raises(ValidationError):
-            ValidationRule(
-                rule_type="test",
-                description="Test rule",
-                severity="critical",  # Not a valid severity
-            )
+            UMFColumn(name="test", data_type="VARCHAR", provenance_policy="invalid_policy")
 
-    def test_rule_with_parameters(self):
-        """Test rule with parameters."""
-        rule = ValidationRule(
-            rule_type="range",
-            description="Value must be in range",
-            severity="error",
-            parameters={"min_value": 0, "max_value": 100},
-        )
+    def test_validates_pivot_index_positive(self):
+        """Test pivot_index must be >= 1."""
+        col = UMFColumn(name="test", data_type="VARCHAR", pivot_index=1)
+        assert col.pivot_index == 1
 
-        assert rule.parameters["min_value"] == 0
-        assert rule.parameters["max_value"] == 100
+        with pytest.raises(ValidationError):
+            UMFColumn(name="test", data_type="VARCHAR", pivot_index=0)
+
+    def test_validates_pivot_max_count_positive(self):
+        """Test pivot_max_count must be >= 1."""
+        col = UMFColumn(name="test", data_type="VARCHAR", pivot_max_count=6)
+        assert col.pivot_max_count == 6
+
+        with pytest.raises(ValidationError):
+            UMFColumn(name="test", data_type="VARCHAR", pivot_max_count=0)
 
 
 class TestForeignKey:
@@ -247,6 +358,51 @@ class TestForeignKey:
         assert fk.references_column == "id"
         assert fk.references == "Customers.id"
 
+    def test_join_type_defaults_to_none(self):
+        """Test that join_type defaults to None (LEFT JOIN behavior)."""
+        fk = ForeignKey(
+            column="member_id",
+            references_table="other_table",
+            references_column="member_id",
+        )
+        assert fk.join_type is None
+
+    def test_join_type_inner(self):
+        """Test that join_type='inner' is accepted."""
+        fk = ForeignKey(
+            column="member_id",
+            references_table="other_table",
+            references_column="member_id",
+            join_type="inner",
+        )
+        assert fk.join_type == "inner"
+
+    def test_cross_pipeline_defaults_to_false(self):
+        """Test cross_pipeline field defaults to False."""
+        fk = ForeignKey(
+            column="member_id",
+            references_table="members",
+            references_column="id",
+        )
+
+        assert fk.cross_pipeline is False
+        assert fk.references_pipeline is None
+
+    def test_cross_pipeline_reference(self):
+        """Test creating a cross-pipeline foreign key reference."""
+        fk = ForeignKey(
+            column="client_member_id",
+            references_table="provided",
+            references_column="client_member_id",
+            cross_pipeline=True,
+            references_pipeline="hc_2026_ent",
+        )
+
+        assert fk.column == "client_member_id"
+        assert fk.references_table == "provided"
+        assert fk.cross_pipeline is True
+        assert fk.references_pipeline == "hc_2026_ent"
+
 
 class TestUMF:
     """Test UMF main model."""
@@ -256,7 +412,8 @@ class TestUMF:
         """Minimal valid UMF data."""
         return {
             "version": "1.0",
-            "table_name": "Test_Table",
+            "table_name": "test_table",
+            "canonical_name": "TestTable",
             "columns": [
                 {"name": "id", "data_type": "INTEGER"},
             ],
@@ -267,7 +424,8 @@ class TestUMF:
         """Full UMF data with all features."""
         return {
             "version": "1.0",
-            "table_name": "Medical_Claims",
+            "table_name": "medical_claims",
+            "canonical_name": "MedicalClaims",
             "source_file": "claims_spec.xlsx",
             "sheet_name": "Medical Claims",
             "description": "Healthcare claims and billing information",
@@ -289,22 +447,13 @@ class TestUMF:
                 },
             ],
             "validation_rules": {
-                "table_level": [
+                "expectations": [
                     {
-                        "rule_type": "row_count",
-                        "description": "Table must not be empty",
-                        "severity": "error",
+                        "type": "expect_column_values_to_be_unique",
+                        "kwargs": {"column": "claim_id"},
+                        "meta": {"description": "claim_id must be unique"},
                     }
-                ],
-                "column_level": {
-                    "claim_id": [
-                        {
-                            "rule_type": "uniqueness",
-                            "description": "claim_id must be unique",
-                            "severity": "error",
-                        }
-                    ]
-                },
+                ]
             },
             "relationships": {
                 "foreign_keys": [
@@ -327,14 +476,14 @@ class TestUMF:
         umf = UMF(**minimal_umf_data)
 
         assert umf.version == "1.0"
-        assert umf.table_name == "Test_Table"
+        assert umf.table_name == "test_table"
         assert len(umf.columns) == 1
 
     def test_creates_full_umf(self, full_umf_data):
         """Test creating full UMF model with all features."""
         umf = UMF(**full_umf_data)
 
-        assert umf.table_name == "Medical_Claims"
+        assert umf.table_name == "medical_claims"
         assert umf.description == "Healthcare claims and billing information"
         assert len(umf.columns) == 2
         assert umf.validation_rules is not None
@@ -346,8 +495,9 @@ class TestUMF:
         with pytest.raises(ValidationError):
             UMF(
                 version="invalid",
-                table_name="Test",
-                columns=[{"name": "col1", "data_type": "VARCHAR"}],
+                table_name="test",
+                canonical_name="Test",
+                columns=[{"name": "col1", "data_type": "STRING"}],
             )
 
     def test_allows_valid_version_formats(self):
@@ -356,7 +506,8 @@ class TestUMF:
         for version in valid_versions:
             umf = UMF(
                 version=version,
-                table_name="Test",
+                table_name="test",
+                canonical_name="Test",
                 columns=[{"name": "col1", "data_type": "VARCHAR"}],
             )
             assert umf.version == version
@@ -373,14 +524,15 @@ class TestUMF:
     def test_requires_at_least_one_column(self):
         """Test UMF must have at least one column."""
         with pytest.raises(ValidationError):
-            UMF(version="1.0", table_name="Test", columns=[])
+            UMF(version="1.0", table_name="test", canonical_name="Test", columns=[])
 
     def test_validates_unique_column_names(self):
         """Test column names must be unique."""
         with pytest.raises(ValidationError) as exc_info:
             UMF(
                 version="1.0",
-                table_name="Test",
+                table_name="test",
+                canonical_name="Test",
                 columns=[
                     {"name": "duplicate", "data_type": "VARCHAR"},
                     {"name": "duplicate", "data_type": "INTEGER"},
@@ -392,7 +544,8 @@ class TestUMF:
         """Test different column names are allowed."""
         umf = UMF(
             version="1.0",
-            table_name="Test",
+            table_name="test",
+            canonical_name="Test",
             columns=[
                 {"name": "col1", "data_type": "VARCHAR"},
                 {"name": "col2", "data_type": "INTEGER"},
@@ -405,7 +558,8 @@ class TestUMF:
         with pytest.raises(ValidationError):
             UMF(
                 version="1.0",
-                table_name="Test",
+                table_name="test",
+                canonical_name="Test",
                 columns=[{"name": "col1", "data_type": "VARCHAR"}],
                 extra_field="not_allowed",
             )
@@ -415,7 +569,8 @@ class TestUMF:
         with pytest.raises(ValidationError):
             UMF(
                 version="1.0",
-                table_name="Test",
+                table_name="test",
+                canonical_name="Test",
                 columns=[{"name": "col1", "data_type": "VARCHAR"}],
                 metadata={"pipeline_phase": 0},
             )
@@ -423,7 +578,8 @@ class TestUMF:
         with pytest.raises(ValidationError):
             UMF(
                 version="1.0",
-                table_name="Test",
+                table_name="test",
+                canonical_name="Test",
                 columns=[{"name": "col1", "data_type": "VARCHAR"}],
                 metadata={"pipeline_phase": 8},
             )
@@ -432,7 +588,8 @@ class TestUMF:
         for phase in range(1, 8):
             umf = UMF(
                 version="1.0",
-                table_name="Test",
+                table_name="test",
+                canonical_name="Test",
                 columns=[{"name": "col1", "data_type": "VARCHAR"}],
                 metadata={"pipeline_phase": phase},
             )
@@ -444,7 +601,7 @@ class TestUMF:
         data = umf.model_dump()
 
         assert data["version"] == "1.0"
-        assert data["table_name"] == "Medical_Claims"
+        assert data["table_name"] == "medical_claims"
         assert isinstance(data, dict)
 
     def test_dict_exclude_none(self, minimal_umf_data):
@@ -458,86 +615,3 @@ class TestUMF:
         assert "validation_rules" not in data
 
 
-class TestUMFFileOperations:
-    """Test UMF file I/O operations."""
-
-    def test_saves_and_loads_umf(self, tmp_path):
-        """Test saving and loading UMF from YAML file."""
-        from tablespec.models.umf import load_umf_from_yaml, save_umf_to_yaml
-
-        # Create UMF
-        umf = UMF(
-            version="1.0",
-            table_name="Test_Table",
-            description="Test table",
-            columns=[
-                {
-                    "name": "id",
-                    "data_type": "INTEGER",
-                    "nullable": {"MD": False, "MP": False, "ME": False},
-                }
-            ],
-        )
-
-        # Save to file
-        yaml_path = tmp_path / "test.umf.yaml"
-        save_umf_to_yaml(umf, yaml_path)
-
-        # File should exist
-        assert yaml_path.exists()
-
-        # Load back
-        loaded_umf = load_umf_from_yaml(yaml_path)
-
-        # Should match
-        assert loaded_umf.version == umf.version
-        assert loaded_umf.table_name == umf.table_name
-        assert loaded_umf.description == umf.description
-        assert len(loaded_umf.columns) == 1
-        assert loaded_umf.columns[0].name == "id"
-
-    def test_load_raises_filenotfounderror(self):
-        """Test loading non-existent file raises error."""
-        from tablespec.models.umf import load_umf_from_yaml
-
-        with pytest.raises(FileNotFoundError):
-            load_umf_from_yaml("/nonexistent/path/file.yaml")
-
-    def test_save_creates_parent_directories(self, tmp_path):
-        """Test saving creates parent directories."""
-        from tablespec.models.umf import save_umf_to_yaml
-
-        umf = UMF(
-            version="1.0",
-            table_name="Test",
-            columns=[{"name": "col1", "data_type": "VARCHAR"}],
-        )
-
-        # Path with nested directories
-        yaml_path = tmp_path / "nested" / "dir" / "test.yaml"
-        save_umf_to_yaml(umf, yaml_path)
-
-        assert yaml_path.exists()
-        assert yaml_path.parent.exists()
-
-    def test_saved_yaml_is_readable(self, tmp_path):
-        """Test saved YAML is human-readable."""
-        from tablespec.models.umf import save_umf_to_yaml
-
-        umf = UMF(
-            version="1.0",
-            table_name="Test_Table",
-            description="Test table",
-            columns=[{"name": "id", "data_type": "INTEGER"}],
-        )
-
-        yaml_path = tmp_path / "test.yaml"
-        save_umf_to_yaml(umf, yaml_path)
-
-        # Read raw content
-        content = yaml_path.read_text()
-
-        # Should be readable YAML
-        assert "version: '1.0'" in content
-        assert "table_name: Test_Table" in content
-        assert "description: Test table" in content
