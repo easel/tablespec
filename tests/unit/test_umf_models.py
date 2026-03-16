@@ -151,6 +151,7 @@ class TestUMFColumn:
             "INTEGER",
             "DATE",
             "DATETIME",
+            "TIMESTAMP",
             "BOOLEAN",
             "FLOAT",
             "TEXT",

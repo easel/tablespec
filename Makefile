@@ -1,4 +1,4 @@
-.PHONY: help install install-dev install-spark setup-spark format lint type-check test test-unit test-integration coverage clean build run
+.PHONY: help install install-dev install-spark setup-spark format lint type-check test test-unit test-integration coverage docs docs-serve clean build run
 
 # Default target
 help: ## Display this help message
@@ -49,6 +49,13 @@ test-integration: ## Run integration tests only
 
 coverage: ## Run tests with coverage report
 	uv run pytest --cov=src --cov-report=term-missing --cov-report=html
+
+# Documentation
+docs: ## Build API documentation
+	uv run mkdocs build
+
+docs-serve: ## Serve API documentation locally
+	uv run mkdocs serve
 
 # Development
 clean: ## Remove build artifacts and cache files

@@ -30,26 +30,30 @@ class UMFValidator:
 
         Args:
         ----
-            schema_path: Path to UMF JSON Schema file. If None, uses default.
+            schema_path: Path to UMF JSON Schema file. If None, uses
+                Pydantic-generated schema from the UMF model.
 
         """
         self.logger = logging.getLogger(self.__class__.__name__)
 
         # Load schema
-        if schema_path is None:
-            schema_path = Path(__file__).parent / "schemas" / "umf.schema.json"
+        if schema_path is not None:
+            if not schema_path.exists():
+                msg = f"UMF schema file not found: {schema_path}"
+                raise FileNotFoundError(msg)
 
-        if not schema_path.exists():
-            msg = f"UMF schema file not found: {schema_path}"
-            raise FileNotFoundError(msg)
+            with schema_path.open(encoding="utf-8") as f:
+                self.schema = json.load(f)
 
-        with schema_path.open(encoding="utf-8") as f:
-            self.schema = json.load(f)
+            self.logger.info(f"UMF validator initialized with schema: {schema_path}")
+        else:
+            from tablespec.models.umf import UMF
+
+            self.schema = UMF.model_json_schema()
+            self.logger.info("UMF validator initialized with Pydantic-generated schema")
 
         # Create validator
         self.validator = jsonschema.Draft7Validator(self.schema)
-
-        self.logger.info(f"UMF validator initialized with schema: {schema_path}")
 
     def validate_file(self, umf_file_path: Path, raise_on_error: bool = True) -> bool:
         """Validate a UMF file.

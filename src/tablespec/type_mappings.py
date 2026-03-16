@@ -100,6 +100,7 @@ def map_to_gx_spark_type(data_type: str) -> str:
         "DOUBLE": "DoubleType",
         "BOOLEAN": "BooleanType",
         "DATE": "StringType",  # Dates stored as YYYYMMDD strings (ADR-001)
+        "DATETIME": "TimestampType",
         "TIMESTAMP": "TimestampType",
     }
 
@@ -146,6 +147,7 @@ def map_to_pyspark_type(data_type: str) -> str:
         "DOUBLE": "DoubleType()",
         "BOOLEAN": "BooleanType()",
         "DATE": "StringType()",  # Dates stored as YYYYMMDD strings (ADR-001)
+        "DATETIME": "TimestampType()",
         "TIMESTAMP": "TimestampType()",
     }
 
@@ -185,6 +187,7 @@ def map_to_json_type(data_type: str) -> str:
         "DOUBLE": "number",
         "BOOLEAN": "boolean",
         "DATE": "string",
+        "DATETIME": "string",
         "TIMESTAMP": "string",
     }
     return mapping.get(data_type.upper(), "string")
@@ -255,6 +258,7 @@ def map_to_pyspark_type_obj(data_type: str) -> "DataType":
         "BOOLEANTYPE": BooleanType(),
         "DATE": DateType(),
         "DATETYPE": DateType(),
+        "DATETIME": TimestampType(),
         "TIMESTAMP": TimestampType(),
         "TIMESTAMPTYPE": TimestampType(),
     }

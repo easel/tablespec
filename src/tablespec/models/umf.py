@@ -392,7 +392,7 @@ class UMFColumn(BaseModel):
     )
     data_type: str = Field(
         description="Column data type",
-        pattern=r"^(VARCHAR|DECIMAL|INTEGER|DATE|DATETIME|BOOLEAN|TEXT|CHAR|FLOAT)$",
+        pattern=r"^(VARCHAR|DECIMAL|INTEGER|DATE|DATETIME|TIMESTAMP|BOOLEAN|TEXT|CHAR|FLOAT)$",
     )
     position: str | None = Field(
         default=None, description="Excel column position or identifier"

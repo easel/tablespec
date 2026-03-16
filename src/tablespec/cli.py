@@ -405,6 +405,69 @@ def batch_convert(
 
 
 @app.command()
+def generate(
+    source: Path = typer.Argument(
+        ...,
+        help="UMF file or directory to generate schema from",
+        exists=True,
+    ),
+    format: str = typer.Option(
+        ...,
+        "--format",
+        "-f",
+        help="Output format: sql, pyspark, or json",
+    ),
+) -> None:
+    """Generate SQL DDL, PySpark schema, or JSON Schema from a UMF file.
+
+    Writes raw output to stdout so it can be piped to files or other tools.
+
+    Examples:
+      tablespec generate table.umf.yaml --format sql
+      tablespec generate tables/claims/ -f pyspark > schema.py
+      tablespec generate table.umf.yaml -f json > schema.json
+
+    """
+    import json as json_mod
+
+    from tablespec.schemas.generators import (
+        generate_json_schema,
+        generate_pyspark_schema,
+        generate_sql_ddl,
+    )
+
+    format_lower = format.strip().lower()
+    if format_lower not in ("sql", "pyspark", "json"):
+        console.print(f"[red]Error:[/red] Unknown format '{format}'. Choose from: sql, pyspark, json")
+        raise typer.Exit(1)
+
+    try:
+        loader = UMFLoader()
+        umf = loader.load(source)
+        umf_data = umf.model_dump(exclude_none=True)
+
+        if format_lower == "sql":
+            result = generate_sql_ddl(umf_data)
+            print(result)
+        elif format_lower == "pyspark":
+            result = generate_pyspark_schema(umf_data)
+            print(result)
+        elif format_lower == "json":
+            result = generate_json_schema(umf_data)
+            print(json_mod.dumps(result, indent=2))
+
+    except FileNotFoundError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+    except ValidationError as e:
+        console.print(f"[red]Validation Error:[/red]\n{e}")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
 def export_excel(
     source: Path = typer.Argument(
         ...,

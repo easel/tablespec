@@ -1,0 +1,33 @@
+site_name: tablespec
+site_description: Python library for Universal Metadata Format (UMF) table schemas
+repo_url: https://github.com/easel/tablespec
+
+theme:
+  name: material
+  palette:
+    scheme: default
+    primary: blue
+  features:
+    - navigation.sections
+    - navigation.expand
+    - search.suggest
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+            show_root_heading: true
+            members_order: source
+            docstring_style: google
+
+nav:
+  - Home: index.md
+  - API Reference:
+    - Models: api/models.md
+    - Schema Generators: api/generators.md
+    - Type Mappings: api/type_mappings.md
+    - Great Expectations: api/gx.md
+    - CLI: api/cli.md

@@ -80,6 +80,7 @@ class TestGXSparkTypeMapping:
             ("DOUBLE", "DoubleType"),
             ("BOOLEAN", "BooleanType"),
             ("DATE", "StringType"),
+            ("DATETIME", "TimestampType"),
             ("TIMESTAMP", "TimestampType"),
         ],
     )
@@ -222,6 +223,7 @@ class TestMapToPysparkType:
             ("DOUBLE", "DoubleType()"),
             ("BOOLEAN", "BooleanType()"),
             ("DATE", "StringType()"),
+            ("DATETIME", "TimestampType()"),
             ("TIMESTAMP", "TimestampType()"),
         ],
     )
@@ -317,6 +319,7 @@ class TestMapToJsonType:
             ("DOUBLE", "number"),
             ("BOOLEAN", "boolean"),
             ("DATE", "string"),
+            ("DATETIME", "string"),
             ("TIMESTAMP", "string"),
         ],
     )

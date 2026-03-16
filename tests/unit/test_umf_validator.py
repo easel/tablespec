@@ -24,7 +24,7 @@ def valid_umf_data():
         "version": "1.0",
         "table_name": "test_table",
         "columns": [
-            {"name": "col1", "data_type": "STRING"},
+            {"name": "col1", "data_type": "VARCHAR"},
         ],
     }
 
@@ -103,7 +103,7 @@ class TestValidateData:
         data = {
             "version": "abc",
             "table_name": "test_table",
-            "columns": [{"name": "col1", "data_type": "STRING"}],
+            "columns": [{"name": "col1", "data_type": "VARCHAR"}],
         }
         with pytest.raises(UMFValidationError):
             validator.validate_data(data)
@@ -155,7 +155,7 @@ class TestBusinessRules:
             "version": "1.0",
             "table_name": "test_table",
             "columns": [
-                {"name": "col1", "data_type": "STRING"},
+                {"name": "col1", "data_type": "VARCHAR"},
                 {"name": "col1", "data_type": "INTEGER"},
             ],
         }
@@ -166,7 +166,7 @@ class TestBusinessRules:
         data = {
             "version": "1.0abc",
             "table_name": "test_table",
-            "columns": [{"name": "col1", "data_type": "STRING"}],
+            "columns": [{"name": "col1", "data_type": "VARCHAR"}],
         }
         # The JSON schema pattern check may catch this first, but business rules also check
         with pytest.raises(UMFValidationError):
@@ -292,8 +292,8 @@ class TestGetValidationErrors:
             "version": "1.0",
             "table_name": "test_table",
             "columns": [
-                {"name": "col1", "data_type": "STRING"},
-                {"name": "col1", "data_type": "STRING"},
+                {"name": "col1", "data_type": "VARCHAR"},
+                {"name": "col1", "data_type": "VARCHAR"},
             ],
         }
         errors = validator.get_validation_errors(data)

@@ -577,3 +577,58 @@ class TestDomainsInferErrors:
         assert "No domain type" in result.output
 
 
+MINIMAL_UMF_JSON = json.dumps({
+    "version": "1.0",
+    "table_name": "TestTable",
+    "columns": [
+        {
+            "name": "id",
+            "data_type": "INTEGER",
+            "nullable": {"MD": False, "MP": False, "ME": False},
+        },
+        {
+            "name": "name",
+            "data_type": "VARCHAR",
+            "length": 100,
+            "nullable": {"MD": True, "MP": True, "ME": True},
+        },
+    ],
+})
+
+
+def _write_umf(tmp_path: Path) -> Path:
+    """Write a minimal UMF JSON file and return its path."""
+    umf_file = tmp_path / "test.json"
+    umf_file.write_text(MINIMAL_UMF_JSON)
+    return umf_file
+
+
+class TestGenerate:
+    """Test generate command."""
+
+    def test_generate_sql_format(self, tmp_path):
+        umf_file = _write_umf(tmp_path)
+        result = runner.invoke(app, ["generate", str(umf_file), "--format", "sql"])
+        assert result.exit_code == 0
+        assert "CREATE TABLE" in result.output
+
+    def test_generate_pyspark_format(self, tmp_path):
+        umf_file = _write_umf(tmp_path)
+        result = runner.invoke(app, ["generate", str(umf_file), "--format", "pyspark"])
+        assert result.exit_code == 0
+        assert "StructType" in result.output
+
+    def test_generate_json_format(self, tmp_path):
+        umf_file = _write_umf(tmp_path)
+        result = runner.invoke(app, ["generate", str(umf_file), "--format", "json"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "properties" in parsed
+
+    def test_generate_unknown_format_error(self, tmp_path):
+        umf_file = _write_umf(tmp_path)
+        result = runner.invoke(app, ["generate", str(umf_file), "--format", "xml"])
+        assert result.exit_code == 1
+        assert "Unknown format" in result.output
+
+

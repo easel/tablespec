@@ -148,3 +148,10 @@ For more details, see README.md and docs/QUICKSTART.md.
 - If push fails, resolve and retry until it succeeds
 
 <!-- END BEADS INTEGRATION -->
+
+## File Reading Discipline
+
+- Never read files larger than 200 lines at once.
+- Never page through a file sequentially.
+- Always identify candidate files with search before opening them.
+- Limit exploration to 5 files before stopping for user approval.

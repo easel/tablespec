@@ -16,6 +16,10 @@ Typer-based CLI (`tablespec` command) for schema management, conversion, and val
 - **`changelog`** - Generate changelog from git history for a table directory
 - **`sync`** - Synchronize baseline validations across table definitions
 
+## Planned Commands
+
+- **`generate`** - Generate SQL DDL, PySpark schema, or JSON Schema from UMF. Supports `--format sql|pyspark|json` and stdout output for piping into CI scripts.
+
 ## Dependencies
 
 - typer (CLI framework)

@@ -58,6 +58,9 @@ dev = [
     "pre-commit>=4.0.0",
     "hypothesis>=6.0.0",
     "sqlglot>=26.0.0",
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.27",
 ]
 
 [tool.pytest.ini_options]

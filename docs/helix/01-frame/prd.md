@@ -31,7 +31,7 @@ tablespec is a Python library for working with table schemas in Universal Metada
 ### FR-1: UMF Model and I/O
 
 - FR-1.1: Pydantic models for UMF format with runtime validation
-- FR-1.2: Support 9 data types: VARCHAR, CHAR, TEXT, INTEGER, DECIMAL, FLOAT, DATE, DATETIME, BOOLEAN
+- FR-1.2: Support 10 data types: VARCHAR, CHAR, TEXT, INTEGER, DECIMAL, FLOAT, DATE, DATETIME, TIMESTAMP, BOOLEAN
 - FR-1.3: Per-LOB nullable configuration (MD, MP, ME)
 - FR-1.4: Validation rules at table and column level
 - FR-1.5: Foreign key relationships with confidence scoring
@@ -98,6 +98,7 @@ tablespec is a Python library for working with table schemas in Universal Metada
 - FR-8.3: `validate` command for UMF validation with pipeline context
 - FR-8.4: `info` command for schema summary display
 - FR-8.5: `batch-convert` command for directory-wide format conversion
+- FR-8.6: `generate` command for SQL DDL, PySpark schema, and JSON Schema output to stdout
 
 ### FR-9: Excel Bidirectional Conversion
 
