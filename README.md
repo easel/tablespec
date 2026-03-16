@@ -18,6 +18,24 @@ Python library for working with table schemas in Universal Metadata Format (UMF)
 - **Domain Type Inference**: Automatic detection of domain types (SSN, NPI, phone, state codes, etc.)
 - **Change Management**: UMF diffing, atomic change application, and git-based changelogs
 
+## Demo
+
+![tablespec demo](examples/tablespec-demo.gif)
+
+The demo walks through loading a UMF schema, generating SQL/PySpark/JSON schemas, type mappings, domain type inference, Great Expectations baseline generation, LLM prompt generation, UMF diffing, and PySpark validation with sample data generation.
+
+Run it yourself:
+
+```bash
+# Run the demo (requires tablespec[spark])
+uv run python examples/demo.py
+
+# Run as acceptance test
+uv run pytest tests/integration/test_demo.py
+```
+
+A [narrated screencast](examples/tablespec-demo-narrated.mp4) and [asciinema recording](examples/tablespec-demo.cast) are also available.
+
 ## Installation
 
 ### Using uv (recommended)

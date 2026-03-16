@@ -1,0 +1,26 @@
+FROM eclipse-temurin:21-jre-noble
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv curl ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Copy project files
+COPY pyproject.toml uv.lock README.md ./
+COPY src/ src/
+COPY examples/ examples/
+
+# Install tablespec with spark extra
+RUN uv sync --extra spark --no-dev --frozen
+
+# Suppress Spark noise
+ENV SPARK_LOG_LEVEL=ERROR
+ENV PYTHONUNBUFFERED=1
+
+# Redirect Spark stderr noise to /dev/null in the entrypoint
+ENTRYPOINT ["sh", "-c", "uv run python examples/demo.py 2>/dev/null"]

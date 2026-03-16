@@ -47,6 +47,9 @@ test-unit: ## Run unit tests only
 test-integration: ## Run integration tests only
 	uv run pytest tests/integration/
 
+test-demo: ## Run demo script as acceptance test
+	uv run python examples/demo.py
+
 coverage: ## Run tests with coverage report
 	uv run pytest --cov=src --cov-report=term-missing --cov-report=html
 
