@@ -10,20 +10,20 @@ Generate structured prompts for LLM-based schema enrichment across documentation
 ## Components
 
 ### Documentation (`prompts/documentation.py`)
-- `_generate_documentation_prompt` - Business purpose, data flow, relationships, compliance
+- `generate_documentation_prompt` - Business purpose, data flow, relationships, compliance
 
 ### Validation (`prompts/validation.py`, `prompts/column_validation.py`)
-- `_generate_validation_prompt` - Table-level multi-column expectations
-- `_generate_column_validation_prompt` - Single-column expectations with prompt hash tracking
-- `_has_validation_rules` / `_should_generate_column_prompt` - Filtering helpers
+- `generate_validation_prompt` - Table-level multi-column expectations
+- `generate_column_validation_prompt` - Single-column expectations with prompt hash tracking
+- `has_validation_rules` / `should_generate_column_prompt` - Filtering helpers
 
 ### Relationships (`prompts/relationship.py`)
-- `_generate_relationship_prompt` - FK discovery with cardinality estimation
+- `generate_relationship_prompt` - FK discovery with cardinality estimation
 - Healthcare-domain awareness (member/provider/claim IDs, drug codes)
 - Handles both UMF and lookup table directories
 
 ### Survivorship (`prompts/survivorship.py`)
-- `_generate_survivorship_prompt` - Data survivorship and merge logic mapping
+- `generate_survivorship_prompt` - Data survivorship and merge logic mapping
 
 ### Expectation Guide (`prompts/expectation_guide.py`)
 - Loads categorized expectation types from JSON schemas
@@ -31,7 +31,7 @@ Generate structured prompts for LLM-based schema enrichment across documentation
 - Decision tree for pending implementation expectations
 
 ### Filename Pattern (`prompts/filename_pattern.py`)
-- `_generate_filename_pattern_prompt` - Filename convention and pattern prompts
+- `generate_filename_pattern_prompt` - Filename convention and pattern prompts
 
 ### Validation Per Column (`prompts/validation_per_column.py`)
 - Column-specific validation prompt generation with granular targeting

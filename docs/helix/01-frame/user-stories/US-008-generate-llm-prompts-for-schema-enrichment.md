@@ -10,9 +10,9 @@
 
 ## Acceptance Criteria
 
-- [ ] `_generate_documentation_prompt` produces a prompt covering business purpose, data flow, relationships, and compliance context for a given UMF table
-- [ ] `_generate_validation_prompt` produces a table-level prompt for multi-column expectation generation
-- [ ] `_generate_column_validation_prompt` produces single-column prompts with prompt hash tracking for incremental re-generation
-- [ ] `_generate_relationship_prompt` produces a prompt for FK discovery with cardinality estimation, supporting both UMF schemas and lookup table directories, with healthcare-domain awareness (member/provider/claim IDs, drug codes)
-- [ ] `_generate_survivorship_prompt` produces a prompt for data survivorship and merge logic mapping
-- [ ] Helper functions `_has_validation_rules` and `_should_generate_column_prompt` correctly filter columns to avoid redundant prompt generation
+- [ ] `generate_documentation_prompt` produces a prompt covering business purpose, data flow, relationships, and compliance context for a given UMF table
+- [ ] `generate_validation_prompt` produces a table-level prompt for multi-column expectation generation
+- [ ] `generate_column_validation_prompt` produces single-column prompts with prompt hash tracking for incremental re-generation
+- [ ] `generate_relationship_prompt` produces a prompt for FK discovery with cardinality estimation, supporting both UMF schemas and lookup table directories, with healthcare-domain awareness (member/provider/claim IDs, drug codes)
+- [ ] `generate_survivorship_prompt` produces a prompt for data survivorship and merge logic mapping
+- [ ] Helper functions `has_validation_rules` and `should_generate_column_prompt` correctly filter columns to avoid redundant prompt generation

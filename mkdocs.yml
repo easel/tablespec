@@ -25,9 +25,22 @@ plugins:
 
 nav:
   - Home: index.md
+  - User Guide:
+    - UMF Format: guide/umf-format.md
+    - Schema Generation: guide/schema-generation.md
+    - Great Expectations: guide/great-expectations.md
+    - Profiling: guide/profiling.md
+    - LLM Prompts: guide/llm-prompts.md
+    - CLI: guide/cli.md
+    - Excel Conversion: guide/excel.md
+    - Split-Format UMF: guide/split-format.md
+    - Sample Data: guide/sample-data.md
+    - Domain Inference: guide/domain-inference.md
+    - Change Management: guide/change-management.md
   - API Reference:
     - Models: api/models.md
     - Schema Generators: api/generators.md
     - Type Mappings: api/type_mappings.md
     - Great Expectations: api/gx.md
     - CLI: api/cli.md
+  - Development: development.md

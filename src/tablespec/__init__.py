@@ -3,9 +3,6 @@
 from tablespec.gx_baseline import BaselineExpectationGenerator, UmfToGxMapper
 from tablespec.gx_constraint_extractor import GXConstraintExtractor
 from tablespec.models import (
-    INGESTED_QUALITY_CHECK_TYPES,
-    RAW_VALIDATION_TYPES,
-    REDUNDANT_VALIDATION_TYPES,
     UMF,
     Cardinality,
     DerivationCandidate,
@@ -39,13 +36,6 @@ from tablespec.models import (
 )
 from tablespec.profiling import ColumnProfile, DataFrameProfile, DeequToUmfMapper
 from tablespec.prompts import (
-    _generate_column_validation_prompt,
-    _generate_documentation_prompt,
-    _generate_relationship_prompt,
-    _generate_survivorship_prompt,
-    _generate_validation_prompt,
-    _has_validation_rules,
-    _should_generate_column_prompt,
     generate_column_validation_prompt,
     generate_documentation_prompt,
     generate_filename_pattern_prompt,
@@ -71,27 +61,62 @@ from tablespec.type_mappings import (
 )
 from tablespec.validation import GXExpectationProcessor
 
+from tablespec.changelog_generator import ChangelogGenerator
+from tablespec.excel_converter import ExcelToUMFConverter, UMFToExcelConverter
+from tablespec.inference.domain_types import DomainTypeInference, DomainTypeRegistry
+from tablespec.sample_data import GenerationConfig, SampleDataGenerator
+from tablespec.umf_diff import UMFDiff
+from tablespec.umf_loader import UMFFormat, UMFLoader
+
 from importlib.metadata import version as _get_version
 
 __version__ = _get_version("tablespec")
 
 __all__ = [
-    "INGESTED_QUALITY_CHECK_TYPES",
-    "RAW_VALIDATION_TYPES",
-    "REDUNDANT_VALIDATION_TYPES",
+    # -- Core UMF I/O & Models --
     "UMF",
+    "UMFColumn",
+    "UMFMetadata",
+    "classify_validation_type",
+    "load_umf_from_yaml",
+    "save_umf_to_yaml",
+    # -- Schema Generation --
+    "generate_json_schema",
+    "generate_pyspark_schema",
+    "generate_sql_ddl",
+    # -- Type Mappings --
+    "VALID_PYSPARK_TYPES",
+    "map_pyspark_to_sql_type",
+    "map_to_gx_spark_type",
+    "map_to_json_type",
+    "map_to_pyspark_type",
+    # -- Great Expectations Integration --
     "BaselineExpectationGenerator",
-    "Cardinality",
+    "GXConstraintExtractor",
+    "GXExpectationProcessor",
+    "UmfToGxMapper",
+    # -- Profiling --
     "ColumnProfile",
     "DataFrameProfile",
     "DeequToUmfMapper",
+    # -- LLM Prompt Generation --
+    "generate_column_validation_prompt",
+    "generate_documentation_prompt",
+    "generate_filename_pattern_prompt",
+    "generate_relationship_prompt",
+    "generate_survivorship_prompt",
+    "generate_survivorship_prompt_per_column",
+    "generate_validation_prompt",
+    "generate_validation_prompt_per_column",
+    "has_validation_rules",
+    "should_generate_column_prompt",
+    # -- Supporting Model Classes --
+    "Cardinality",
     "DerivationCandidate",
     "FileFormat",
     "FileFormatSpec",
     "FilenamePattern",
     "ForeignKey",
-    "GXConstraintExtractor",
-    "GXExpectationProcessor",
     "IncomingRelationship",
     "Index",
     "IngestionConfig",
@@ -107,33 +132,24 @@ __all__ = [
     "RelationshipSummary",
     "Relationships",
     "Survivorship",
-    "UMFColumn",
     "UMFColumnDerivation",
-    "UMFMetadata",
-    "UmfToGxMapper",
     "ValidationRule",
     "ValidationRules",
-    "classify_validation_type",
-    "generate_column_validation_prompt",
-    "generate_documentation_prompt",
-    "generate_filename_pattern_prompt",
-    "generate_json_schema",
-    "generate_pyspark_schema",
-    "generate_relationship_prompt",
-    "generate_sql_ddl",
-    "generate_survivorship_prompt",
-    "generate_survivorship_prompt_per_column",
-    "generate_validation_prompt",
-    "generate_validation_prompt_per_column",
-    "has_validation_rules",
-    "load_umf_from_yaml",
-    "VALID_PYSPARK_TYPES",
-    "map_pyspark_to_sql_type",
-    "map_to_gx_spark_type",
-    "map_to_json_type",
-    "map_to_pyspark_type",
-    "save_umf_to_yaml",
-    "should_generate_column_prompt",
+    # -- Excel Conversion --
+    "UMFToExcelConverter",
+    "ExcelToUMFConverter",
+    # -- Split-Format UMF --
+    "UMFLoader",
+    "UMFFormat",
+    # -- Sample Data --
+    "SampleDataGenerator",
+    "GenerationConfig",
+    # -- Domain Inference --
+    "DomainTypeInference",
+    "DomainTypeRegistry",
+    # -- Change Management --
+    "UMFDiff",
+    "ChangelogGenerator",
 ]
 
 # SparkToUmfMapper and TableValidator are available only if pyspark is installed (via tablespec[spark])

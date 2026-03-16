@@ -1,0 +1,32 @@
+version: "1.0"
+table_name: Medical_Claims
+description: Healthcare claims and billing information
+columns:
+  - name: claim_id
+    data_type: VARCHAR
+    length: 50
+    description: Unique claim identifier
+    nullable:
+      MD: false
+      MP: false
+      ME: false
+  - name: claim_amount
+    data_type: DECIMAL
+    precision: 10
+    scale: 2
+    description: Claim amount in USD
+    nullable:
+      MD: true
+      MP: true
+      ME: true
+  - name: provider_id
+    data_type: VARCHAR
+    length: 20
+    description: Provider identifier
+    nullable:
+      MD: false
+      MP: false
+      ME: false
+    sample_values:
+      - "PRV001"
+      - "PRV002"
