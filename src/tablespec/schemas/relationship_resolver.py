@@ -10,9 +10,10 @@ and column name matching to infer joins rather than relying on hardcoded pattern
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from tablespec.models.umf import JoinViaSpec, UMF
@@ -37,7 +38,7 @@ class JoinInfo:
     target_table: str
     source_column: str
     target_column: str
-    strategy: str  # "direct" | "first_record" | "pivot"
+    strategy: Literal["direct", "first_record", "pivot"]
     partition_by: list[str] = field(default_factory=list)
     order_by: list[str] = field(default_factory=list)
     pivot: PivotSpec | None = None
@@ -46,7 +47,65 @@ class JoinInfo:
     table_instance: str | None = None  # Unique alias for filtered joins
     join_filter: str | None = None  # SQL WHERE conditions for conditional joins
     join_via: JoinViaSpec | None = None  # Custom join keys
-    join_type: str = "left"  # "left" | "inner"
+    join_type: Literal["left", "inner"] = "left"
+
+
+@dataclass
+class ResolvedPlan:
+    """Normalized plan returned by ``RelationshipResolver.resolve_plan``."""
+
+    base_table: str | None
+    join_sequence: list[dict[str, Any]]
+    aliases: dict[str, dict[str, str]]
+    base_table_strategy: str | None = None
+    union_sources: list[dict[str, Any]] | None = None
+
+
+def infer_join_key(
+    table_name: str,
+    columns: list[str],
+    all_umfs: dict[str, UMF] | None = None,
+) -> str | None:
+    """Infer the join key column for a table.
+
+    Uses the UMF primary_key field first, then falls back to column name matching.
+
+    Args:
+        table_name: Name of the table (used to look up UMF primary_key)
+        columns: List of column names in the table
+        all_umfs: Optional dict mapping table names to UMF models for primary key lookup.
+
+    Returns:
+        Best join key column name, or None if no candidate found.
+
+    """
+    # Priority 1: Use UMF primary_key if available
+    if all_umfs and table_name in all_umfs:
+        umf = all_umfs[table_name]
+        if umf.primary_key:
+            pk = umf.primary_key[0]
+            # Verify PK column actually exists in the column list
+            if pk in columns or not columns:
+                return pk
+
+    # Priority 2: Look for columns containing common key patterns
+    # (case-insensitive, underscore-insensitive matching)
+    for col in columns:
+        col_normalized = col.replace("_", "").lower()
+        if col_normalized.endswith("id") and (
+            "member" in col_normalized
+            or "client" in col_normalized
+            or "user" in col_normalized
+            or "key" in col_normalized
+        ):
+            return col
+
+    # Priority 3: Any column ending with _id or Id
+    for col in columns:
+        if col.lower().endswith("_id") or col.endswith("Id"):
+            return col
+
+    return None
 
 
 class RelationshipResolver:
@@ -67,19 +126,15 @@ class RelationshipResolver:
 
     # ---------- Public API ----------
 
-    def resolve_plan(self, target_umf: UMF) -> dict[str, Any]:
-        """Return a normalized plan dict for the target table.
+    def resolve_plan(self, target_umf: UMF) -> ResolvedPlan:
+        """Return a normalized plan for the target table.
 
         Args:
             target_umf: UMF specification (Pydantic model)
 
         Returns:
-            Normalized plan dict with keys:
-              - join_sequence: List[JoinInfo as dict]
-              - aliases: Dict[str, Dict[str, str]] (table -> {alias: canonical})
-              - base_table: str | None (inferred base/hub table, None for union_sources)
-              - base_table_strategy: str | None (strategy for building base table)
-              - union_sources: list[dict] | None (source table info for union_sources strategy)
+            ResolvedPlan with join_sequence, aliases, base_table, and optional
+            base_table_strategy / union_sources.
 
         """
         # Check for base_table_strategy and explicit base_table in metadata
@@ -112,7 +167,9 @@ class RelationshipResolver:
 
         # Load relationships from base table AND all contributing tables
         if base_table:
-            all_relationships = self._load_all_relationships(base_table, contributing_tables)
+            all_relationships = self._load_all_relationships(
+                base_table, contributing_tables
+            )
         elif base_table_strategy == "union_sources" and union_sources:
             all_relationships = self._build_union_source_relationships(union_sources)
         else:
@@ -158,11 +215,8 @@ class RelationshipResolver:
                 best_candidate = self._select_best_relationship(candidates, target_umf)
                 join_candidates.append(best_candidate)
 
-        # Extract and apply join_filter from derivation candidates
-        self._populate_join_filters(join_candidates, target_umf)
-
-        # Extract and apply join_via from derivation candidates
-        self._populate_join_via(join_candidates, target_umf)
+        # Extract and apply join_filter and join_via from derivation candidates
+        self._populate_join_metadata(target_umf, join_candidates)
 
         # Apply join_type from foreign_keys if specified
         self._populate_join_types(join_candidates, target_umf)
@@ -177,9 +231,14 @@ class RelationshipResolver:
                 j.partition_by, j.order_by = self._infer_first_record_order(j)
 
         # Order joins deterministically: by contribution score, table name, then alias
-        scored = [
-            (self._contribution_score(j.target_table, target_umf), j) for j in join_candidates
-        ]
+        # Cache contribution scores to avoid recomputation
+        score_cache: dict[str, int] = {}
+        for j in join_candidates:
+            if j.target_table not in score_cache:
+                score_cache[j.target_table] = self._contribution_score(
+                    j.target_table, target_umf
+                )
+        scored = [(score_cache[j.target_table], j) for j in join_candidates]
         scored.sort(
             key=lambda x: (
                 -x[0],  # Contribution score (descending)
@@ -192,18 +251,13 @@ class RelationshipResolver:
         # Build alias maps (automatic case/underscore-insensitive mapping)
         aliases = self._build_alias_maps(contributing_tables)
 
-        result: dict[str, Any] = {
-            "base_table": base_table,
-            "join_sequence": [self._joininfo_to_dict(j) for j in join_sequence],
-            "aliases": aliases,
-        }
-
-        if base_table_strategy:
-            result["base_table_strategy"] = base_table_strategy
-        if union_sources:
-            result["union_sources"] = union_sources
-
-        return result
+        return ResolvedPlan(
+            base_table=base_table,
+            join_sequence=[self._joininfo_to_dict(j) for j in join_sequence],
+            aliases=aliases,
+            base_table_strategy=base_table_strategy,
+            union_sources=union_sources if union_sources else None,
+        )
 
     # ---------- Inference helpers ----------
 
@@ -230,7 +284,25 @@ class RelationshipResolver:
 
         umf = self.all_umfs[table_name]
         if umf.relationships and umf.relationships.outgoing:
-            return [rel.model_dump() for rel in umf.relationships.outgoing]
+            result: list[dict[str, Any]] = []
+            for rel in umf.relationships.outgoing:
+                d: dict[str, Any] = {
+                    "target_table": rel.target_table,
+                    "source_column": rel.source_column,
+                    "target_column": rel.target_column,
+                    "type": rel.type,
+                    "confidence": rel.confidence,
+                }
+                if rel.cardinality:
+                    d["cardinality"] = {
+                        "notation": rel.cardinality.notation,
+                        "type": rel.cardinality.type,
+                        "mandatory": rel.cardinality.mandatory,
+                    }
+                if rel.reasoning:
+                    d["reasoning"] = rel.reasoning
+                result.append(d)
+            return result
         return []
 
     def _load_all_relationships(
@@ -274,7 +346,10 @@ class RelationshipResolver:
                     "target_table": contrib_table,
                     "source_column": base_join_key,
                     "target_column": join_key,
-                    "cardinality": {"notation": cardinality_notation, "mandatory": False},
+                    "cardinality": {
+                        "notation": cardinality_notation,
+                        "mandatory": False,
+                    },
                     "confidence": 0.5,
                     "_synthetic": True,
                 }
@@ -286,43 +361,9 @@ class RelationshipResolver:
     def _infer_join_key(self, table_name: str, columns: list[str]) -> str | None:
         """Infer the join key column for a table.
 
-        Uses the UMF primary_key field first, then falls back to column name matching.
-
-        Args:
-            table_name: Name of the table (used to look up UMF primary_key)
-            columns: List of column names in the table
-
-        Returns:
-            Best join key column name, or None if no candidate found.
-
+        Delegates to the module-level :func:`infer_join_key` helper.
         """
-        # Priority 1: Use UMF primary_key if available
-        if table_name in self.all_umfs:
-            umf = self.all_umfs[table_name]
-            if umf.primary_key:
-                pk = umf.primary_key[0]
-                # Verify PK column actually exists in the column list
-                if pk in columns or not columns:
-                    return pk
-
-        # Priority 2: Look for columns containing common key patterns
-        # (case-insensitive, underscore-insensitive matching)
-        for col in columns:
-            col_normalized = col.replace("_", "").lower()
-            if col_normalized.endswith("id") and (
-                "member" in col_normalized
-                or "client" in col_normalized
-                or "user" in col_normalized
-                or "key" in col_normalized
-            ):
-                return col
-
-        # Priority 3: Any column ending with _id or Id
-        for col in columns:
-            if col.lower().endswith("_id") or col.endswith("Id"):
-                return col
-
-        return None
+        return infer_join_key(table_name, columns, self.all_umfs)
 
     def _get_table_columns(self, table_name: str) -> list[str]:
         """Get column names for a table from UMF model.
@@ -339,7 +380,9 @@ class RelationshipResolver:
             return [col.name for col in umf.columns] if umf.columns else []
         return []
 
-    def _get_contributing_instances(self, target_umf: UMF) -> dict[str, set[str | None]]:
+    def _get_contributing_instances(
+        self, target_umf: UMF
+    ) -> dict[str, set[str | None]]:
         """Get all table instances that contribute columns to the target table.
 
         Returns dict mapping table name to set of table_instance values.
@@ -359,23 +402,40 @@ class RelationshipResolver:
 
         return instances
 
-    def _populate_join_filters(self, join_candidates: list[JoinInfo], target_umf: UMF) -> None:
-        """Extract join_filter from derivation candidates and apply to JoinInfo."""
+    def _populate_join_metadata(
+        self, target_umf: UMF, join_candidates: list[JoinInfo]
+    ) -> None:
+        """Extract join_filter and join_via from derivation candidates in a single pass.
+
+        When present, join_via overrides the default join keys (source_column/target_column)
+        with custom keys for indirect joins through lookup tables.
+        """
         filters: dict[tuple[str, str | None], str] = {}
+        join_via_specs: dict[tuple[str, str | None], Any] = {}
 
         for col in target_umf.columns:
             if col.derivation and col.derivation.candidates:
                 for cand in col.derivation.candidates:
                     tbl = cand.table
+                    if not tbl:
+                        continue
                     inst = cand.table_instance
+                    key = (tbl, inst)
+
                     filt = cand.join_filter
-                    if tbl and filt:
-                        key = (tbl, inst)
-                        if key not in filters:
-                            filters[key] = filt
-                            logger.debug(
-                                f"Found join_filter for {tbl} (instance={inst}): {filt[:80]}..."
-                            )
+                    if filt and key not in filters:
+                        filters[key] = filt
+                        logger.debug(
+                            f"Found join_filter for {tbl} (instance={inst}): {filt[:80]}..."
+                        )
+
+                    jv = cand.join_via
+                    if jv and key not in join_via_specs:
+                        join_via_specs[key] = jv
+                        logger.debug(
+                            f"Found join_via for {tbl} (instance={inst}): "
+                            f"{jv.source_key} -> {jv.target_key}"
+                        )
 
         for join_info in join_candidates:
             key = (join_info.target_table, join_info.table_instance)
@@ -385,32 +445,6 @@ class RelationshipResolver:
                     f"Applied join_filter to {join_info.target_table} "
                     + f"(instance={join_info.table_instance})"
                 )
-
-    def _populate_join_via(self, join_candidates: list[JoinInfo], target_umf: UMF) -> None:
-        """Extract join_via from derivation candidates and apply to JoinInfo.
-
-        When present, join_via overrides the default join keys (source_column/target_column)
-        with custom keys for indirect joins through lookup tables.
-        """
-        join_via_specs: dict[tuple[str, str | None], Any] = {}
-
-        for col in target_umf.columns:
-            if col.derivation and col.derivation.candidates:
-                for cand in col.derivation.candidates:
-                    tbl = cand.table
-                    inst = cand.table_instance
-                    jv = cand.join_via
-                    if tbl and jv:
-                        key = (tbl, inst)
-                        if key not in join_via_specs:
-                            join_via_specs[key] = jv
-                            logger.debug(
-                                f"Found join_via for {tbl} (instance={inst}): "
-                                f"{jv.source_key} -> {jv.target_key}"
-                            )
-
-        for join_info in join_candidates:
-            key = (join_info.target_table, join_info.table_instance)
             if key in join_via_specs:
                 jv_spec = join_via_specs[key]
                 join_info.join_via = jv_spec
@@ -420,7 +454,9 @@ class RelationshipResolver:
                     f"{jv_spec.source_key} -> {jv_spec.target_key}"
                 )
 
-    def _populate_join_types(self, join_candidates: list[JoinInfo], target_umf: UMF) -> None:
+    def _populate_join_types(
+        self, join_candidates: list[JoinInfo], target_umf: UMF
+    ) -> None:
         """Apply join_type from foreign_keys to matching JoinInfo entries."""
         if not target_umf.relationships or not target_umf.relationships.foreign_keys:
             return
@@ -436,8 +472,8 @@ class RelationshipResolver:
 
         for join_info in join_candidates:
             jt = fk_join_types.get(join_info.target_table)
-            if jt:
-                join_info.join_type = jt
+            if jt and jt in ("left", "inner"):
+                join_info.join_type = jt  # type: ignore[assignment]
                 logger.info(
                     f"Applied join_type '{jt}' to {join_info.target_table} from foreign_keys"
                 )
@@ -518,7 +554,9 @@ class RelationshipResolver:
 
         source_tables = target_umf.metadata.source_tables or []
         if not source_tables:
-            logger.warning("union_sources strategy specified but no source_tables in metadata")
+            logger.warning(
+                "union_sources strategy specified but no source_tables in metadata"
+            )
             return union_sources
 
         # Get the primary key column from the target table
@@ -595,7 +633,9 @@ class RelationshipResolver:
 
         return relationships
 
-    def _infer_strategy(self, j: JoinInfo, target_umf: UMF) -> str:
+    def _infer_strategy(
+        self, j: JoinInfo, target_umf: UMF
+    ) -> Literal["direct", "first_record", "pivot"]:
         """Infer join strategy based on cardinality notation."""
         notation = j.cardinality.get("notation", "") if j.cardinality else ""
 
@@ -627,15 +667,11 @@ class RelationshipResolver:
             return False
 
         # Check for numbered suffix pattern (e.g., gap1, gap2, item_1, item_2)
-        import re
-
         numbered = [c for c in derived_cols if re.search(r"\d+$", c)]
         return len(numbered) >= 2
 
     def _infer_pivot_spec(self, j: JoinInfo, target_umf: UMF) -> PivotSpec:
         """Infer pivot specification from target columns derived from this table."""
-        import re
-
         target_cols = self._get_table_columns(j.target_table)
         key_col = j.target_column
 
@@ -682,7 +718,15 @@ class RelationshipResolver:
             col_lower = col.lower()
             if any(
                 kw in col_lower
-                for kw in ("date", "time", "timestamp", "created", "updated", "sequence", "order")
+                for kw in (
+                    "date",
+                    "time",
+                    "timestamp",
+                    "created",
+                    "updated",
+                    "sequence",
+                    "order",
+                )
             ):
                 order_candidates.append(col)
 
@@ -693,7 +737,9 @@ class RelationshipResolver:
         first = cols[0] if cols else partition_col
         return [partition_col], [first] if first else []
 
-    def _select_best_relationship(self, candidates: list[JoinInfo], target_umf: UMF) -> JoinInfo:
+    def _select_best_relationship(
+        self, candidates: list[JoinInfo], target_umf: UMF
+    ) -> JoinInfo:
         """Select the best relationship when multiple exist to the same target table."""
         if len(candidates) == 1:
             return candidates[0]
@@ -726,7 +772,9 @@ class RelationshipResolver:
 
             scored_candidates.append((score, candidate))
 
-        scored_candidates.sort(key=lambda x: (-x[0], x[1].target_table, x[1].source_column))
+        scored_candidates.sort(
+            key=lambda x: (-x[0], x[1].target_table, x[1].source_column)
+        )
         return scored_candidates[0][1]
 
     def _contribution_score(self, source_table: str, target_umf: UMF) -> int:
@@ -739,7 +787,9 @@ class RelationshipResolver:
                         score += 1
         return score
 
-    def _build_alias_maps(self, contributing_tables: set[str]) -> dict[str, dict[str, str]]:
+    def _build_alias_maps(
+        self, contributing_tables: set[str]
+    ) -> dict[str, dict[str, str]]:
         """Build case/underscore-insensitive canonicalization maps per table."""
 
         def norm(s: str) -> str:

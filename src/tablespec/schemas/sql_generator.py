@@ -90,6 +90,8 @@ _SQL_KEYWORDS = {
     "CONCAT_WS",
 }
 
+_IDENTIFIER_RE = re.compile(r"(?<![\w\.])([A-Za-z_][A-Za-z0-9_]*)")
+
 _SPARK_TYPE_MAP = {
     "TEXT": "STRING",
     "CHAR": "STRING",
@@ -230,10 +232,10 @@ class SQLPlanGenerator:
         resolver = RelationshipResolver(related_umfs)
         plan = resolver.resolve_plan(table_umf)
 
-        join_sequence: list[dict[str, Any]] = plan.get("join_sequence", [])
-        base_table: str | None = plan.get("base_table")
-        base_table_strategy: str | None = plan.get("base_table_strategy")
-        union_sources: list[dict[str, Any]] | None = plan.get("union_sources")
+        join_sequence: list[dict[str, Any]] = plan.join_sequence
+        base_table: str | None = plan.base_table
+        base_table_strategy: str | None = plan.base_table_strategy
+        union_sources: list[dict[str, Any]] | None = plan.union_sources
 
         self._join_sequence = join_sequence
 
@@ -646,24 +648,20 @@ SELECT {pk_col} FROM member_universe;"""
         return None
 
     def _infer_join_column_from_umf(self, table_name: str) -> str | None:
-        """Try to infer join column from UMF primary key or common patterns."""
-        umf = self._related_umfs.get(table_name)
-        if umf is None:
-            _, bare = _parse_table_ref(table_name)
-            umf = self._related_umfs.get(bare)
+        """Try to infer join column from UMF primary key or common patterns.
+
+        Delegates to :func:`.relationship_resolver.infer_join_key`.
+        """
+        from .relationship_resolver import infer_join_key
+
+        _, bare = _parse_table_ref(table_name)
+        umf = self._related_umfs.get(table_name) or self._related_umfs.get(bare)
         if umf is None or not umf.columns:
             return None
 
-        # Try primary key first
-        if umf.primary_key:
-            return umf.primary_key[0]
-
-        # Fall back to columns ending in _id
-        for col in umf.columns:
-            if col.name.lower().endswith("_id"):
-                return col.name
-
-        return None
+        columns = [col.name for col in umf.columns]
+        lookup_name = table_name if table_name in self._related_umfs else bare
+        return infer_join_key(lookup_name, columns, {lookup_name: umf})
 
     # ------------------------------------------------------------------
     # Pre-aggregation views
@@ -1048,25 +1046,62 @@ WHERE rn = 1;"""
         msg = f"Unknown join strategy: {strategy}"
         raise ValueError(msg)
 
-    def _generate_direct_join(
-        self, step: int, join_info: dict[str, Any], prev_view: str
-    ) -> str:
-        """Generate SQL for a direct LEFT/INNER JOIN."""
+    def _prepare_join_context(
+        self, join_info: dict[str, Any]
+    ) -> tuple[str, str, str, str, str, str, str, list[str]]:
+        """Extract common join setup from a join_info dict.
+
+        Returns:
+            Tuple of (target_table, source_col, target_col, join_filter,
+            resolved_table, table_alias, sanitized_alias, base_column_selections).
+        """
         target_table = join_info["target_table"]
         source_col = join_info["source_column"]
         target_col = join_info["target_column"]
-        cardinality = join_info["cardinality"].get("notation", "1:1")
 
         join_via = join_info.get("join_via")
         if join_via:
             source_col = join_via["source_key"]
             target_col = join_via["target_key"]
 
+        join_filter: str = join_info.get("join_filter") or ""
         resolved_table = self._resolve_table_name(target_table)
 
         table_instance = join_info.get("table_instance")
         table_alias = table_instance if table_instance else target_table
-        join_filter = join_info.get("join_filter")
+        sanitized_alias = self._sanitize_alias(table_alias)
+
+        base_column_selections = [
+            f"base.{col}" for col in sorted(self._accumulated_columns.keys())
+        ]
+
+        return (
+            target_table,
+            source_col,
+            target_col,
+            join_filter,
+            resolved_table,
+            table_alias,
+            sanitized_alias,
+            base_column_selections,
+        )
+
+    def _generate_direct_join(
+        self, step: int, join_info: dict[str, Any], prev_view: str
+    ) -> str:
+        """Generate SQL for a direct LEFT/INNER JOIN."""
+        (
+            target_table,
+            source_col,
+            target_col,
+            join_filter,
+            resolved_table,
+            table_alias,
+            sanitized_alias,
+            base_column_selections,
+        ) = self._prepare_join_context(join_info)
+        cardinality = join_info["cardinality"].get("notation", "1:1")
+        table_instance = join_info.get("table_instance")
 
         target_columns = self._get_table_columns(target_table)
 
@@ -1077,12 +1112,6 @@ WHERE rn = 1;"""
                 for col in target_columns
                 if col in required_cols or col.startswith("meta_")
             ]
-
-        sanitized_alias = self._sanitize_alias(table_alias)
-
-        base_column_selections = [
-            f"base.{col}" for col in sorted(self._accumulated_columns.keys())
-        ]
 
         target_column_selections: list[str] = []
         for col in target_columns:
@@ -1192,16 +1221,18 @@ LEFT JOIN {target_table}_pivoted pivot
         self, step: int, join_info: dict[str, Any], prev_view: str
     ) -> str:
         """Generate SQL for a first-record join (ROW_NUMBER partitioned dedup)."""
-        target_table = join_info["target_table"]
-        source_col = join_info["source_column"]
-        target_col = join_info["target_column"]
+        (
+            target_table,
+            source_col,
+            target_col,
+            join_filter,
+            resolved_table,
+            table_alias,
+            sanitized_alias,
+            base_column_selections,
+        ) = self._prepare_join_context(join_info)
         cardinality = join_info["cardinality"].get("notation", "1:0..N")
-        join_filter = join_info.get("join_filter")
-
-        resolved_table = self._resolve_table_name(target_table)
-
         table_instance = join_info.get("table_instance")
-        table_alias = table_instance if table_instance else target_table
 
         where_clause = ""
         if join_filter:
@@ -1248,8 +1279,6 @@ LEFT JOIN {target_table}_pivoted pivot
                 )
                 order_columns = order_col
 
-        sanitized_alias = self._sanitize_alias(table_alias)
-
         # Build subquery column set
         subquery_columns = set(filtered_columns)
         subquery_columns.add(target_col)
@@ -1267,10 +1296,6 @@ LEFT JOIN {target_table}_pivoted pivot
                     subquery_columns.discard(col_name)
 
         subquery_column_list = ",\n    ".join(sorted(subquery_columns))
-
-        base_column_selections = [
-            f"base.{col}" for col in sorted(self._accumulated_columns.keys())
-        ]
 
         target_column_selections: list[str] = []
         for col in filtered_columns:
@@ -1408,7 +1433,7 @@ LEFT JOIN {agg_view_name} agg
                 return f"{alias_prefix}{tok}"
             return tok
 
-        return re.sub(r"(?<![\w\.])([A-Za-z_][A-Za-z0-9_]*)", _token_repl, expression)
+        return _IDENTIFIER_RE.sub(_token_repl, expression)
 
     # ------------------------------------------------------------------
     # Final assembly
@@ -1521,17 +1546,6 @@ FROM {final_view} base;"""
             return f"CAST(NULL AS {spark_type})"
 
         # Single candidate
-        if strategy == "single_source" and len(candidates) == 1:
-            single_expr = self._generate_single_candidate_mapping(
-                candidates[0], base_table, col_name
-            )
-            if default_value is not None:
-                default_literal = self._format_default_value_literal(
-                    default_value, data_type
-                )
-                return f"COALESCE({single_expr}, {default_literal})"
-            return single_expr
-
         if len(candidates) == 1:
             single_expr = self._generate_single_candidate_mapping(
                 candidates[0], base_table, col_name

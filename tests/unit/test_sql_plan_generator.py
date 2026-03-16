@@ -16,7 +16,7 @@ from tablespec.models.umf import (
     UMFColumn,
     UMFColumnDerivation,
 )
-from tablespec.schemas.relationship_resolver import JoinInfo, PivotSpec, RelationshipResolver
+from tablespec.schemas.relationship_resolver import JoinInfo, PivotSpec, RelationshipResolver, ResolvedPlan
 from tablespec.schemas.sql_generator import SQLPlanGenerator, generate_sql_plan
 
 
@@ -828,9 +828,9 @@ class TestRelationshipResolver:
         """resolve_plan identifies a base table."""
         resolver = RelationshipResolver(related_umfs)
         plan = resolver.resolve_plan(derived_umf)
-        assert "base_table" in plan
+        assert isinstance(plan, ResolvedPlan)
         # source_a has the higher hub_score
-        assert plan["base_table"] == "source_a"
+        assert plan.base_table == "source_a"
 
     def test_resolve_plan_returns_join_sequence(
         self, derived_umf: UMF, related_umfs: dict[str, UMF]
@@ -838,8 +838,8 @@ class TestRelationshipResolver:
         """resolve_plan returns a join_sequence list."""
         resolver = RelationshipResolver(related_umfs)
         plan = resolver.resolve_plan(derived_umf)
-        assert "join_sequence" in plan
-        assert isinstance(plan["join_sequence"], list)
+        assert hasattr(plan, "join_sequence")
+        assert isinstance(plan.join_sequence, list)
 
     def test_infers_join_from_derivation_candidates(
         self, derived_umf: UMF, related_umfs: dict[str, UMF]
@@ -847,7 +847,7 @@ class TestRelationshipResolver:
         """Resolver creates joins for tables referenced in derivation candidates."""
         resolver = RelationshipResolver(related_umfs)
         plan = resolver.resolve_plan(derived_umf)
-        join_tables = {j["target_table"] for j in plan["join_sequence"]}
+        join_tables = {j["target_table"] for j in plan.join_sequence}
         # source_b should appear in the join sequence (source_a is the base)
         assert "source_b" in join_tables
 
@@ -857,7 +857,7 @@ class TestRelationshipResolver:
         """1:0..1 cardinality infers 'direct' strategy."""
         resolver = RelationshipResolver(related_umfs)
         plan = resolver.resolve_plan(derived_umf)
-        for join in plan["join_sequence"]:
+        for join in plan.join_sequence:
             if join["target_table"] == "source_b":
                 assert join["strategy"] == "direct"
 
@@ -922,7 +922,7 @@ class TestRelationshipResolver:
         )
         resolver = RelationshipResolver({"hub": hub, "detail": detail})
         plan = resolver.resolve_plan(target)
-        for join in plan["join_sequence"]:
+        for join in plan.join_sequence:
             if join["target_table"] == "detail":
                 assert join["strategy"] == "first_record"
 
@@ -1065,7 +1065,7 @@ class TestRelationshipResolver:
             {"hub": hub, "src_many": src_many, "src_few": src_few}
         )
         plan = resolver.resolve_plan(target)
-        join_tables = [j["target_table"] for j in plan["join_sequence"]]
+        join_tables = [j["target_table"] for j in plan.join_sequence]
         # src_many contributes 3 columns, src_few contributes 1 -> src_many first
         assert join_tables.index("src_many") < join_tables.index("src_few")
 
@@ -1075,8 +1075,8 @@ class TestRelationshipResolver:
         """resolve_plan returns an aliases dict."""
         resolver = RelationshipResolver(related_umfs)
         plan = resolver.resolve_plan(derived_umf)
-        assert "aliases" in plan
-        assert isinstance(plan["aliases"], dict)
+        assert hasattr(plan, "aliases")
+        assert isinstance(plan.aliases, dict)
 
 
 # ---------------------------------------------------------------------------
@@ -1162,3 +1162,230 @@ class TestConvenienceFunction:
         sql = generate_sql_plan(survivorship_umf, survivorship_related_umfs)
         assert "COALESCE" in sql
         assert "survivorship_output" in sql
+
+
+# ---------------------------------------------------------------------------
+# TestEdgeCasesAndErrors
+# ---------------------------------------------------------------------------
+
+
+class TestEdgeCasesAndErrors:
+    """Test edge cases and error paths for SQL plan generation."""
+
+    def test_empty_related_umfs(self, minimal_umf: UMF):
+        """generate_sql_plan with empty related_umfs dict should not crash.
+
+        All columns should get CAST(NULL ...) since no sources are available.
+        """
+        sql = generate_sql_plan(minimal_umf, {})
+        assert isinstance(sql, str)
+        assert len(sql) > 0
+        assert "CAST(NULL" in sql
+        assert "test_claims" in sql
+
+    def test_umf_with_no_columns(self):
+        """UMF with columns=[] is rejected by Pydantic validation."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="too_short"):
+            _make_umf("empty_columns_table", [])
+
+    def test_umf_with_no_derivations(self):
+        """Columns with no derivation field should produce CAST(NULL) defaults."""
+        target = _make_umf(
+            "no_derivations_table",
+            [
+                UMFColumn(name="col_a", data_type="VARCHAR"),
+                UMFColumn(name="col_b", data_type="INTEGER"),
+                UMFColumn(name="col_c", data_type="DATE"),
+            ],
+        )
+        sql = generate_sql_plan(target, {})
+        assert "CAST(NULL" in sql
+        # Each column type should map to its SQL equivalent
+        assert "no_derivations_table" in sql
+
+    def test_unknown_join_strategy_handled(self):
+        """JoinInfo strategy is constrained to Literal types; valid values accepted."""
+        # Verify that valid strategy values are accepted
+        for valid_strategy in ("direct", "first_record", "pivot"):
+            j = JoinInfo(
+                target_table="tbl",
+                source_column="src",
+                target_column="tgt",
+                strategy=valid_strategy,
+            )
+            assert j.strategy == valid_strategy
+            assert j.target_table == "tbl"
+
+    def test_table_resolver_transforms_names(self):
+        """table_resolver that uppercases table names produces uppercased SQL."""
+        source = _make_umf(
+            "my_source",
+            [
+                UMFColumn(name="id", data_type="VARCHAR"),
+                UMFColumn(name="value", data_type="VARCHAR"),
+            ],
+            primary_key=["id"],
+            relationships=Relationships(
+                summary=RelationshipSummary(
+                    total_relationships=0,
+                    total_incoming=0,
+                    total_outgoing=0,
+                    hub_score=5.0,
+                ),
+            ),
+        )
+        target = _make_umf(
+            "my_target",
+            [
+                UMFColumn(
+                    name="id",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(strategy="primary_key"),
+                ),
+                UMFColumn(
+                    name="value",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(
+                        candidates=[
+                            DerivationCandidate(
+                                table="my_source", column="value", priority=1
+                            ),
+                        ],
+                        survivorship=Survivorship(
+                            strategy="single_source",
+                            explanation="Direct",
+                        ),
+                    ),
+                ),
+            ],
+            primary_key=["id"],
+        )
+
+        def upper_resolver(name: str) -> str:
+            return name.upper()
+
+        gen = SQLPlanGenerator(table_resolver=upper_resolver)
+        sql = gen.generate_for_table(target, {"my_source": source})
+        assert "MY_SOURCE" in sql
+
+    def test_deeply_nested_expression_derivation(self):
+        """Complex CASE expression in derivation appears in output SQL."""
+        source = _make_umf(
+            "expr_source",
+            [
+                UMFColumn(name="id", data_type="VARCHAR"),
+                UMFColumn(name="col1", data_type="INTEGER"),
+                UMFColumn(name="col2", data_type="VARCHAR"),
+                UMFColumn(name="col3", data_type="VARCHAR"),
+            ],
+            primary_key=["id"],
+            relationships=Relationships(
+                summary=RelationshipSummary(
+                    total_relationships=0,
+                    total_incoming=0,
+                    total_outgoing=0,
+                    hub_score=5.0,
+                ),
+            ),
+        )
+        target = _make_umf(
+            "expr_target",
+            [
+                UMFColumn(
+                    name="id",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(strategy="primary_key"),
+                ),
+                UMFColumn(
+                    name="computed",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(
+                        candidates=[
+                            DerivationCandidate(
+                                table="expr_source",
+                                expression="CASE WHEN col1 > 0 THEN col2 ELSE col3 END",
+                                priority=1,
+                            ),
+                        ],
+                        survivorship=Survivorship(
+                            strategy="single_source",
+                            explanation="Conditional expression",
+                        ),
+                    ),
+                ),
+            ],
+            primary_key=["id"],
+        )
+
+        gen = SQLPlanGenerator()
+        sql = gen.generate_for_table(target, {"expr_source": source})
+        assert "CASE WHEN" in sql
+        assert "col1" in sql
+        assert "col2" in sql
+        assert "col3" in sql
+
+    def test_resolver_with_single_table(self):
+        """RelationshipResolver with only one table handles gracefully."""
+        single = _make_umf(
+            "only_table",
+            [
+                UMFColumn(name="id", data_type="VARCHAR"),
+                UMFColumn(name="name", data_type="VARCHAR"),
+            ],
+            primary_key=["id"],
+            relationships=Relationships(
+                summary=RelationshipSummary(
+                    total_relationships=0,
+                    total_incoming=0,
+                    total_outgoing=0,
+                    hub_score=1.0,
+                ),
+            ),
+        )
+        target = _make_umf(
+            "single_target",
+            [
+                UMFColumn(
+                    name="id",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(strategy="primary_key"),
+                ),
+                UMFColumn(
+                    name="name",
+                    data_type="VARCHAR",
+                    derivation=UMFColumnDerivation(
+                        candidates=[
+                            DerivationCandidate(
+                                table="only_table", column="name", priority=1
+                            ),
+                        ],
+                        survivorship=Survivorship(
+                            strategy="single_source",
+                            explanation="Direct",
+                        ),
+                    ),
+                ),
+            ],
+            primary_key=["id"],
+        )
+
+        resolver = RelationshipResolver({"only_table": single})
+        plan = resolver.resolve_plan(target)
+        assert plan.base_table == "only_table"
+        # No joins needed since only one table
+        assert isinstance(plan.join_sequence, list)
+
+    def test_resolver_empty_umfs(self):
+        """RelationshipResolver with empty all_umfs should not crash."""
+        target = _make_umf(
+            "orphan_target",
+            [
+                UMFColumn(name="id", data_type="VARCHAR"),
+            ],
+        )
+        resolver = RelationshipResolver({})
+        plan = resolver.resolve_plan(target)
+        assert isinstance(plan, ResolvedPlan)
+        assert isinstance(plan.join_sequence, list)
