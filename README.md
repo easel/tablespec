@@ -15,6 +15,12 @@ Python library for working with table schemas in Universal Metadata Format (UMF)
   - [Great Expectations Integration](#great-expectations-integration)
   - [Profiling Integration](#profiling-integration)
   - [LLM Prompt Generation](#llm-prompt-generation)
+- [CLI](#cli)
+- [Excel Conversion](#excel-conversion)
+- [Split-Format UMF](#split-format-umf)
+- [Sample Data Generation](#sample-data-generation)
+- [Domain Type Inference](#domain-type-inference)
+- [Change Management](#change-management)
 - [API Reference](#api-reference)
 - [Development](#development)
 
@@ -27,6 +33,12 @@ Python library for working with table schemas in Universal Metadata Format (UMF)
 - **Validation**: Table validation against UMF specifications with Great Expectations
 - **Type Mappings**: Convert between UMF, PySpark, JSON, and Great Expectations types
 - **LLM Prompt Generation**: Generate structured prompts for documentation, validation rules, relationships, and survivorship logic
+- **CLI**: Typer-based command-line interface with Rich output for schema management and conversion
+- **Excel Conversion**: Bidirectional Excel export/import for domain expert collaboration
+- **Split-Format UMF**: Git-friendly directory-based storage with automatic format detection
+- **Sample Data Generation**: Healthcare-specific, constraint-aware sample data from UMF specs
+- **Domain Type Inference**: Automatic detection of domain types (SSN, NPI, phone, state codes, etc.)
+- **Change Management**: UMF diffing, atomic change application, and git-based changelogs
 
 ## Installation
 
@@ -51,6 +63,9 @@ pip install tablespec[spark] --index-url https://easel.github.io/tablespec/simpl
 ```
 
 **Note**: This package is distributed via GitHub Pages. The `--index-url` flag is required.
+
+**Optional extras**:
+- `tablespec[spark]` - Adds PySpark support for `SparkToUmfMapper`, `TableValidator`, `SampleDataGenerator` (with Spark FK seeding), `BaselineService`, and table merge. Install this extra only if you need Spark-dependent features.
 
 ## Quick Start
 
@@ -408,6 +423,152 @@ survivorship_prompt = _generate_survivorship_prompt(umf_dict)
 # Asks LLM to suggest survivorship/merge logic for deduplication
 ```
 
+## CLI
+
+The `tablespec` command provides schema management, conversion, and validation from the terminal. Requires `typer` and `rich` (included in default dependencies).
+
+```bash
+# Validate a UMF schema (single table or entire pipeline directory)
+tablespec validate tables/outreach_list/
+
+# Display schema summary
+tablespec info tables/outreach_list/
+
+# Convert between split and JSON formats
+tablespec convert outreach_list.json tables/outreach_list/
+
+# Batch convert a directory of UMF files
+tablespec batch-convert tables/ output/ --format split
+
+# Export UMF to Excel for domain expert review
+tablespec export-excel tables/medical_claims/ claims.xlsx
+
+# Import edited Excel back to UMF (split format)
+tablespec import-excel claims.xlsx tables/medical_claims/
+
+# List all registered domain types
+tablespec domains-list
+
+# Show details of a specific domain type
+tablespec domains-show us_state_code
+
+# Infer domain type for a column
+tablespec domains-infer --column state --description "State code abbreviation"
+```
+
+## Excel Conversion
+
+Round-trip conversion between UMF and Excel for non-technical domain experts. Excel workbooks include data validation dropdowns, helper columns, and instructions.
+
+```python
+from tablespec.excel_converter import UMFToExcelConverter, ExcelToUMFConverter
+from tablespec.umf_loader import UMFLoader
+
+# Export UMF to Excel
+loader = UMFLoader()
+umf = loader.load("tables/medical_claims/")
+converter = UMFToExcelConverter()
+workbook = converter.convert(umf)
+workbook.save("medical_claims.xlsx")
+
+# Import Excel back to UMF
+importer = ExcelToUMFConverter()
+umf, metadata = importer.convert("medical_claims.xlsx")
+```
+
+## Split-Format UMF
+
+Directory-based UMF storage for git-friendly per-column change tracking. `UMFLoader` auto-detects whether a path is a split directory or a JSON file.
+
+```
+tables/medical_claims/
+├── table.yaml          # Table-level metadata
+└── columns/
+    ├── claim_id.yaml   # One file per column
+    ├── claim_amount.yaml
+    └── provider_id.yaml
+```
+
+```python
+from tablespec.umf_loader import UMFLoader, UMFFormat
+
+loader = UMFLoader()
+
+# Load from any format (auto-detected)
+umf = loader.load("tables/medical_claims/")   # split directory
+umf = loader.load("medical_claims.json")       # JSON file
+
+# Convert between formats
+loader.convert("medical_claims.json", "tables/medical_claims/", target_format=UMFFormat.SPLIT)
+loader.convert("tables/medical_claims/", "medical_claims.json", target_format=UMFFormat.JSON)
+```
+
+## Sample Data Generation
+
+Generate realistic, constraint-aware sample data from UMF specifications. Supports healthcare-specific generators (SSN, NPI, drug codes), foreign key relationship graphs for referential integrity, and CSV/JSON output.
+
+```python
+from tablespec.sample_data import SampleDataGenerator, GenerationConfig
+
+config = GenerationConfig(record_count=100, seed=42)
+generator = SampleDataGenerator(
+    input_dir="tables/",
+    output_dir="sample_output/",
+    config=config,
+)
+generator.generate()
+# Produces CSV files in sample_output/ with realistic, relationship-aware data
+```
+
+## Domain Type Inference
+
+Automatic detection of semantic domain types from column names, descriptions, and sample values. Uses a YAML-based registry of domain types (e.g., `us_state_code`, `email`, `phone_number`, `npi`, `ssn`).
+
+```python
+from tablespec.inference.domain_types import DomainTypeInference, DomainTypeRegistry
+
+# List available domain types
+registry = DomainTypeRegistry()
+print(registry.list_domain_types())
+
+# Infer domain type for a column
+inference = DomainTypeInference()
+domain_type, confidence = inference.infer_domain_type(
+    "member_state_code",
+    description="State where member resides",
+    sample_values=["CA", "NY", "TX"],
+)
+# domain_type="us_state_code", confidence=0.95
+```
+
+## Change Management
+
+Detect differences between UMF versions and generate structured changelogs. `UMFDiff` compares two UMF objects to identify column, validation, metadata, and relationship changes. Integrates with git for commit-level change history.
+
+```python
+from tablespec.umf_diff import UMFDiff
+from tablespec.models import UMF
+
+old_umf = load_umf_from_yaml("v1/schema.yaml")
+new_umf = load_umf_from_yaml("v2/schema.yaml")
+
+diff = UMFDiff(old_umf, new_umf)
+column_changes = diff.get_column_changes()
+
+for change in column_changes:
+    print(change.description())
+    # "Add column diagnosis_code"
+    # "Modify column claim_amount: data_type changed from INTEGER to DECIMAL"
+```
+
+```python
+from tablespec.changelog_generator import ChangelogGenerator
+
+# Generate changelog from git history
+generator = ChangelogGenerator(repo_path=".")
+changelog = generator.generate(table_path="tables/medical_claims/")
+```
+
 ## API Reference
 
 ### Core Models
@@ -459,6 +620,38 @@ survivorship_prompt = _generate_survivorship_prompt(umf_dict)
 - `_generate_relationship_prompt(umf_dict, all_tables)` - Relationship detection
 - `_generate_survivorship_prompt(umf_dict)` - Survivorship logic
 
+#### CLI
+- `tablespec` - Typer CLI app (subcommands: `validate`, `info`, `convert`, `batch-convert`, `export-excel`, `import-excel`, `domains-list`, `domains-show`, `domains-infer`)
+
+#### Excel Conversion
+- `UMFToExcelConverter` - Export UMF to formatted Excel workbook
+- `ExcelToUMFConverter` - Import Excel workbook to UMF
+
+#### Split-Format UMF
+- `UMFLoader` - Load/save/convert UMF with automatic format detection
+- `UMFFormat` - Enum: `SPLIT` (directory) or `JSON` (single file)
+
+#### Sample Data Generation
+- `SampleDataGenerator` - Main generation engine (input dir, output dir, config)
+- `GenerationConfig` - Configuration (record count, seed, output format)
+- `RelationshipGraph` - Foreign key dependency resolution for generation order
+- `HealthcareDataGenerators` - Domain-specific value generators
+- `FilenameGenerator` - Generate filenames from UMF filename pattern specs
+
+#### Domain Type Inference
+- `DomainTypeRegistry` - YAML-based registry of domain type definitions
+- `DomainTypeInference` - Infer domain types from column name, description, and samples
+
+#### Change Management
+- `UMFDiff` - Detect column, validation, metadata, and relationship changes between UMF versions
+- `UMFColumnChange` - Represents a single column change (added/removed/modified)
+- `ChangelogGenerator` - Generate changelogs from git commit history
+- `ChangelogDiffParser` - Parse YAML diffs for detailed change detection
+
+#### Quality Baselines
+- `BaselineService` - Capture and compare quality baselines from DataFrames (requires Spark)
+- `BaselineStorage` - Store and retrieve baseline metrics
+
 ## Development
 
 ### Setup
@@ -492,27 +685,88 @@ uv run pytest tests/unit/test_gx_baseline.py
 
 ```
 src/tablespec/
-├── __init__.py              # Public API
+├── __init__.py                  # Public API exports
+├── cli.py                       # Typer CLI (validate, info, convert, excel, domains)
 ├── models/
-│   └── umf.py              # Pydantic UMF models
+│   ├── umf.py                   # Pydantic UMF models
+│   ├── changelog.py             # Changelog entry models
+│   └── pipeline.py              # Pipeline configuration models
 ├── schemas/
-│   └── generators.py       # Schema generation (SQL, PySpark, JSON)
-├── type_mappings.py        # Type system conversions
-├── gx_baseline.py          # GX baseline expectation generation
-├── gx_constraint_extractor.py  # Extract constraints from GX
-├── gx_schema_validator.py  # Schema validation with GX
+│   ├── generators.py            # Schema generation (SQL, PySpark, JSON)
+│   ├── umf.schema.json          # JSON Schema for UMF validation
+│   ├── gx_expectation_suite.schema.json
+│   ├── expectation_categories.json
+│   └── expectation_parameters.json
+├── type_mappings.py             # Type system conversions
+├── date_formats.py              # Date/datetime format definitions
+├── naming.py                    # Naming utilities (to_spark_identifier, position_sort_key)
+├── naming_validator.py          # Column naming convention validation
+├── gx_baseline.py               # GX baseline expectation generation
+├── gx_constraint_extractor.py   # Extract constraints from GX suites
+├── gx_schema_validator.py       # Schema validation with GX
+├── gx_wrapper.py                # GX utility wrapper
+├── excel_converter.py           # Bidirectional Excel ↔ UMF conversion
+├── excel_import_git.py          # Git-integrated Excel import with atomic commits
+├── umf_loader.py                # Split/JSON format loader with auto-detection
+├── umf_diff.py                  # UMF version diffing
+├── umf_change_applier.py        # Atomic change application for per-change commits
+├── umf_validator.py             # UMF structural validation
+├── changelog_generator.py       # Git-based changelog generation
+├── changelog_diff_parser.py     # YAML diff parsing for change detection
+├── changelog_formatter.py       # Changelog output formatting
+├── inference/
+│   └── domain_types.py          # Domain type registry and inference engine
+├── sample_data/
+│   ├── engine.py                # Main sample data generation engine
+│   ├── config.py                # Generation configuration
+│   ├── generators.py            # Healthcare-specific data generators
+│   ├── column_value_generator.py # Per-column value generation
+│   ├── constraint_handlers.py   # Validation constraint handling
+│   ├── foreign_keys.py          # FK relationship-aware generation
+│   ├── graph.py                 # Dependency graph for generation order
+│   ├── filename_generator.py    # Filename pattern generation
+│   ├── date_processing.py       # Date format handling
+│   ├── registry.py              # Key registry for uniqueness
+│   ├── validation.py            # Validation rule processing
+│   └── cli.py                   # Sample data CLI entry point
+├── quality/
+│   ├── baseline_service.py      # Baseline capture and comparison
+│   ├── baseline_storage.py      # Baseline persistence
+│   ├── executor.py              # Quality check execution
+│   └── storage.py               # Quality result storage
 ├── profiling/
-│   ├── types.py            # Profiling result types
-│   ├── spark_mapper.py     # Spark to UMF mapper
-│   └── deequ_mapper.py     # Deequ to UMF mapper
+│   ├── types.py                 # Profiling result types
+│   ├── spark_mapper.py          # Spark DataFrame → UMF (requires PySpark)
+│   └── deequ_mapper.py          # Deequ profile → UMF
 ├── prompts/
-│   ├── documentation.py    # Documentation prompts
-│   ├── validation.py       # Validation rule prompts
-│   ├── relationship.py     # Relationship detection prompts
-│   └── survivorship.py     # Survivorship logic prompts
-└── validation/
-    ├── gx_processor.py     # GX expectation processing
-    └── table_validator.py  # Table validation engine
+│   ├── documentation.py         # Documentation enrichment prompts
+│   ├── validation.py            # Table-level validation rule prompts
+│   ├── validation_per_column.py # Per-column validation prompts
+│   ├── column_validation.py     # Column-specific validation prompts
+│   ├── relationship.py          # Relationship detection prompts
+│   ├── survivorship.py          # Survivorship logic prompts
+│   ├── filename_pattern.py      # Filename pattern prompts
+│   ├── expectation_guide.py     # GX expectation reference
+│   └── utils.py                 # Prompt utilities
+├── formatting/
+│   ├── constants.py             # Formatting constants
+│   └── yaml_formatter.py        # YAML output formatting
+├── validation/
+│   ├── gx_processor.py          # GX expectation processing
+│   ├── table_validator.py       # Table validation engine (requires PySpark)
+│   └── custom_gx_expectations.py # Custom GX expectation types
+├── casting_utils.py             # Type casting utilities
+├── completeness_validator.py    # Data completeness validation
+├── dependency_resolver.py       # Module dependency resolution
+├── format_utils.py              # Format conversion utilities
+├── merge.py                     # Table merge with survivorship (requires PySpark)
+├── relationship_validator.py    # FK relationship validation
+├── spark_factory.py             # SparkSession factory (requires PySpark)
+├── survivorship_display.py      # Survivorship rule display
+├── sync_baseline.py             # Baseline synchronization
+├── output_formatting.py         # Output display formatting
+├── validator.py                 # Pipeline-level validation orchestration
+└── domain_types.yaml            # Domain type registry definitions
 ```
 
 ## License
