@@ -98,8 +98,6 @@ tablespec is a Python library for working with table schemas in Universal Metada
 - FR-8.3: `validate` command for UMF validation with pipeline context
 - FR-8.4: `info` command for schema summary display
 - FR-8.5: `batch-convert` command for directory-wide format conversion
-- FR-8.6: `changelog` command for git-based change history
-- FR-8.7: `sync` command for baseline validation synchronization
 
 ### FR-9: Excel Bidirectional Conversion
 

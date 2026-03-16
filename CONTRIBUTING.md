@@ -32,7 +32,7 @@ tablespec is a Python library for working with table schemas in Universal Metada
 - **UMF as single source of truth** - All schema conversions should be bidirectional when possible
 - **Pure Python library** - Focus on metadata, not data processing
 - **Optional dependencies** - PySpark is optional; core features work without it
-- **Type safety** - Leverage Pydantic models and mypy for runtime and static validation
+- **Type safety** - Leverage Pydantic models and pyright for runtime and static validation
 - **Great Expectations** - Support both generating and extracting constraints
 
 ## Getting Started
@@ -153,7 +153,7 @@ make lint-fix  # Auto-fix issues
 
 ### Type Checking
 
-We use **mypy** for static type analysis:
+We use **pyright** for static type analysis:
 
 ```bash
 make type-check  # Type check src/ directory
