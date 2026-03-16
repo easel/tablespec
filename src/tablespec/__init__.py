@@ -71,7 +71,9 @@ from tablespec.type_mappings import (
 )
 from tablespec.validation import GXExpectationProcessor
 
-__version__ = "0.1.0"
+from importlib.metadata import version as _get_version
+
+__version__ = _get_version("tablespec")
 
 __all__ = [
     "INGESTED_QUALITY_CHECK_TYPES",

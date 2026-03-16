@@ -740,7 +740,9 @@ def version_callback(ctx: typer.Context) -> None:
     """Show version info or help."""
     if ctx.invoked_subcommand is None:
         if ctx.params.get("version"):
-            console.print("tablespec version 0.0.0")
+            from tablespec import __version__
+
+            console.print(f"tablespec version {__version__}")
         else:
             console.print(ctx.get_help())
         raise typer.Exit
