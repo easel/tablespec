@@ -176,21 +176,11 @@ class TestValidateBaselineExpectations:
         return ValidationRule(rule_type=rule_type, description=f"{rule_type} check", severity="error")
 
     def test_all_baseline_validations_present(self):
-        """Test validation passes when all baseline validations exist.
+        """Test validation passes when baseline validations exist.
 
-        Note: expect_column_values_to_be_of_type removed - redundant with DDL schema.
+        Note: REQUIRED_BASELINE_TYPES is now empty since expect_column_to_exist
+        and expect_column_values_to_be_of_type are both redundant with schema metadata.
         """
-        column_level = {
-            "col1": [self._rule("expect_column_to_exist")],
-        }
-        umf = self._create_umf_with_validations(["col1"], column_level)
-
-        errors = validate_baseline_expectations(umf)
-
-        assert errors == []
-
-    def test_missing_column_to_exist(self):
-        """Test validation fails when expect_column_to_exist is missing."""
         column_level = {
             "col1": [self._rule("expect_column_values_to_cast_to_type")],
         }
@@ -198,61 +188,52 @@ class TestValidateBaselineExpectations:
 
         errors = validate_baseline_expectations(umf)
 
-        assert len(errors) == 1
-        assert errors[0][0] == "col1"
-        assert "expect_column_to_exist" in errors[0][1]
+        assert errors == []
 
-    def test_existence_validation_is_only_required_baseline(self):
-        """Test that only expect_column_to_exist is required as baseline.
+    def test_no_required_baseline_types(self):
+        """Test validation passes even without expect_column_to_exist.
 
-        Note: expect_column_values_to_be_of_type was removed - redundant with DDL schema.
+        Both expect_column_to_exist and expect_column_values_to_be_of_type are
+        now classified as REDUNDANT_VALIDATION_TYPES, so no baseline types are required.
         """
         column_level = {
-            "col1": [self._rule("expect_column_to_exist")],
+            "col1": [self._rule("expect_column_values_to_cast_to_type")],
         }
         umf = self._create_umf_with_validations(["col1"], column_level)
 
         errors = validate_baseline_expectations(umf)
 
-        # Should pass - only existence check is required now
         assert errors == []
 
-    def test_no_validations(self):
-        """Test validation fails when no validations exist."""
+    def test_no_validations_passes_with_empty_required_set(self):
+        """Test validation passes when no validations exist (no required types)."""
         umf = self._create_umf_with_validations(["col1"], None)
 
         errors = validate_baseline_expectations(umf)
 
-        # Should report only missing expect_column_to_exist (type check removed)
-        assert len(errors) == 1
-        assert all(err[0] == "col1" for err in errors)
+        # No required baseline types, so no errors
+        assert errors == []
 
-    def test_multiple_columns_missing_validations(self):
-        """Test validation reports missing validations for all columns."""
+    def test_multiple_columns_no_required_types(self):
+        """Test validation passes for all columns with no required baseline types."""
         umf = self._create_umf_with_validations(["col1", "col2"], None)
 
         errors = validate_baseline_expectations(umf)
 
-        # 2 columns x 1 required baseline type (existence only) = 2 errors
-        assert len(errors) == 2
-        col1_errors = [e for e in errors if e[0] == "col1"]
-        col2_errors = [e for e in errors if e[0] == "col2"]
-        assert len(col1_errors) == 1
-        assert len(col2_errors) == 1
+        # No required baseline types, so no errors
+        assert errors == []
 
     def test_partial_validations_per_column(self):
-        """Test validation reports per-column missing validations correctly."""
+        """Test validation passes for all columns regardless of which validations exist."""
         column_level = {
-            "col1": [self._rule("expect_column_to_exist")],
+            "col1": [self._rule("expect_column_values_to_cast_to_type")],
             "col2": [self._rule("expect_column_values_to_cast_to_type")],
         }
         umf = self._create_umf_with_validations(["col1", "col2"], column_level)
 
         errors = validate_baseline_expectations(umf)
 
-        assert len(errors) == 1
-        assert errors[0][0] == "col2"
-        assert "expect_column_to_exist" in errors[0][1]
+        assert errors == []
 
 
 class TestConstants:
@@ -270,9 +251,9 @@ class TestConstants:
     def test_required_baseline_types(self):
         """Test required baseline expectation types.
 
-        Note: expect_column_values_to_be_of_type removed - redundant with DDL schema.
+        Both expect_column_to_exist and expect_column_values_to_be_of_type are
+        now classified as REDUNDANT_VALIDATION_TYPES, so the set is empty.
         """
-        assert "expect_column_to_exist" in REQUIRED_BASELINE_TYPES
-        # Type checks removed - redundant with DDL schema enforcement
+        assert "expect_column_to_exist" not in REQUIRED_BASELINE_TYPES
         assert "expect_column_values_to_be_of_type" not in REQUIRED_BASELINE_TYPES
-        assert len(REQUIRED_BASELINE_TYPES) == 1
+        assert len(REQUIRED_BASELINE_TYPES) == 0

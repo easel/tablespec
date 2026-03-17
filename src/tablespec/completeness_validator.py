@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 try:
     from tablespec.gx_baseline import REQUIRED_BASELINE_EXPECTATION_TYPES
 except ImportError:
-    REQUIRED_BASELINE_EXPECTATION_TYPES = frozenset({"expect_column_to_exist"})
+    REQUIRED_BASELINE_EXPECTATION_TYPES: frozenset[str] = frozenset()
 
 # ingestion.constants may not be ported yet
 try:

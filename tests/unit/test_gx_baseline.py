@@ -71,8 +71,8 @@ class TestBaselineExpectationGenerator:
         )
 
         # Should have structural + column expectations
-        # 2 structural (column count, column list) + 2 columns * 2 expectations each
-        assert len(expectations) >= 6
+        # 2 structural (column count, column list) + id: cast_to_type (1) + name: (0) = 3
+        assert len(expectations) >= 3
 
         # Check structural expectations exist
         exp_types = [exp["type"] for exp in expectations]
@@ -88,9 +88,9 @@ class TestBaselineExpectationGenerator:
         )
 
         # Should only have column expectations:
-        # - id (IntegerType): existence, be_of_type, cast_to_type (3)
-        # - name (StringType): existence, be_of_type (2)
-        assert len(expectations) == 5
+        # - id (IntegerType): cast_to_type (1)
+        # - name (StringType): (0)
+        assert len(expectations) == 1
 
         # Check no structural expectations
         exp_types = [exp["type"] for exp in expectations]
@@ -124,34 +124,35 @@ class TestBaselineExpectationGenerator:
         assert column_list_exp["kwargs"]["column_list"] == ["id", "name"]
         assert column_list_exp["meta"]["severity"] == "critical"
 
-    def test_column_existence_expectation(self, generator):
-        """Test that column existence expectation is always generated."""
+    def test_column_existence_not_generated(self, generator):
+        """Test that column existence expectation is no longer generated (redundant)."""
         column = {"name": "test_col", "data_type": "VARCHAR"}
 
         expectations = generator.generate_baseline_column_expectations(column)
 
         existence_exp = next(
-            exp for exp in expectations if exp["type"] == "expect_column_to_exist"
+            (exp for exp in expectations if exp["type"] == "expect_column_to_exist"),
+            None,
         )
 
-        assert existence_exp["kwargs"]["column"] == "test_col"
-        assert existence_exp["meta"]["severity"] == "critical"
+        assert existence_exp is None
 
-    def test_column_type_expectation(self, generator):
-        """Test that column type expectation is generated."""
+    def test_column_type_not_generated(self, generator):
+        """Test that column type expectation is no longer generated (redundant)."""
         column = {"name": "age", "data_type": "INTEGER"}
 
         expectations = generator.generate_baseline_column_expectations(column)
 
         type_exp = next(
-            exp
-            for exp in expectations
-            if exp["type"] == "expect_column_values_to_be_of_type"
+            (
+                exp
+                for exp in expectations
+                if exp["type"] == "expect_column_values_to_be_of_type"
+            ),
+            None,
         )
 
-        assert type_exp["kwargs"]["column"] == "age"
-        assert type_exp["kwargs"]["type_"] == "IntegerType"
-        assert type_exp["meta"]["severity"] == "info"
+        assert type_exp is None
 
     def test_nullability_expectation_required(self, generator):
         """Test nullability expectation when column is required for some LOBs."""
@@ -250,18 +251,20 @@ class TestBaselineExpectationGenerator:
             full_umf, include_structural=True
         )
 
-        # Should have many expectations
-        assert len(expectations) > 10
+        # Should have several expectations
+        assert len(expectations) > 5
 
         # Check all expected types are present
         exp_types = {exp["type"] for exp in expectations}
         assert "expect_table_column_count_to_equal" in exp_types
         assert "expect_table_columns_to_match_ordered_list" in exp_types
-        assert "expect_column_to_exist" in exp_types
-        assert "expect_column_values_to_be_of_type" in exp_types
         assert "expect_column_values_to_not_be_null" in exp_types
         assert "expect_column_value_lengths_to_be_between" in exp_types
         assert "expect_column_values_to_match_strftime_format" in exp_types
+
+        # Redundant types should NOT be present
+        assert "expect_column_to_exist" not in exp_types
+        assert "expect_column_values_to_be_of_type" not in exp_types
 
 
 class TestUmfToGxMapper:
@@ -354,9 +357,9 @@ class TestUmfToGxMapper:
         assert "expect_table_column_count_to_equal" in exp_types
         assert "expect_table_columns_to_match_ordered_list" in exp_types
 
-        # Should have column expectations
-        assert "expect_column_to_exist" in exp_types
-        assert "expect_column_values_to_be_of_type" in exp_types
+        # Redundant types should NOT be present
+        assert "expect_column_to_exist" not in exp_types
+        assert "expect_column_values_to_be_of_type" not in exp_types
 
     def test_profiling_expectations_generated(self, mapper, umf_with_profiling):
         """Test that profiling-based expectations are attempted."""

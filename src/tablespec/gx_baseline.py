@@ -13,16 +13,14 @@ from typing import Any, Literal
 import yaml
 
 from tablespec.format_utils import convert_umf_format_to_strftime
+from tablespec.models.umf import REDUNDANT_VALIDATION_TYPES
 from tablespec.type_mappings import map_to_gx_spark_type
 
 logger = logging.getLogger(__name__)
 
 # Required baseline expectation types that must exist for every column
-REQUIRED_BASELINE_EXPECTATION_TYPES = frozenset(
-    {
-        "expect_column_to_exist",
-    }
-)
+# Note: expect_column_to_exist was removed because it is redundant with schema metadata
+REQUIRED_BASELINE_EXPECTATION_TYPES: frozenset[str] = frozenset()
 
 
 class DomainTypeExpectationGenerator:
@@ -112,13 +110,15 @@ class BaselineExpectationGenerator:
     """Generate baseline Great Expectations rules from UMF metadata.
 
     This generates simple, deterministic expectations that don't require LLM reasoning:
-    - Column existence
-    - Column types
     - Nullability (from UMF nullable field)
     - Length constraints (from UMF length/max_length)
     - Structural checks (column count, column list)
     - Date/timestamp/numeric casting validation
     - Domain type validations (from domain_types.yaml registry)
+    - Profiling-based expectations (uniqueness, ranges, completeness)
+
+    Note: Column existence and column type expectations are intentionally NOT generated
+    as they are classified as REDUNDANT_VALIDATION_TYPES (covered by schema metadata).
     """
 
     def __init__(self) -> None:
@@ -218,35 +218,10 @@ class BaselineExpectationGenerator:
         expectations = []
         column_name = column["name"]
         data_type = column.get("data_type", "STRING")
-        gx_type = map_to_gx_spark_type(data_type)
 
-        # 1. Column existence
-        expectations.append(
-            {
-                "type": "expect_column_to_exist",
-                "kwargs": {"column": column_name},
-                "meta": {
-                    "description": f"Column {column_name} must exist in table schema",
-                    "severity": "critical",
-                    "generated_from": "baseline",
-                },
-            }
-        )
-
-        # 2. Column type
-        expectations.append(
-            {
-                "type": "expect_column_values_to_be_of_type",
-                "kwargs": {"column": column_name, "type_": gx_type},
-                "meta": {
-                    "description": f"Column {column_name} must be {gx_type} (from UMF: {data_type})",
-                    "severity": "info",
-                    "generated_from": "baseline",
-                },
-            }
-        )
-
-        # 3. Nullability (from UMF nullable field, not profiling)
+        # 1. Nullability (from UMF nullable field, not profiling)
+        # Note: expect_column_to_exist and expect_column_values_to_be_of_type
+        # are no longer generated here as they are in REDUNDANT_VALIDATION_TYPES
         nullable = column.get("nullable", {})
         if nullable:
             # Check if required for any context
@@ -265,7 +240,7 @@ class BaselineExpectationGenerator:
                     }
                 )
 
-        # 4. Length constraints
+        # 2. Length constraints
         max_length = column.get("max_length") or column.get("length")
         if max_length:
             expectations.append(
@@ -280,7 +255,7 @@ class BaselineExpectationGenerator:
                 }
             )
 
-        # 5. Date format and casting validation (if DATE type)
+        # 3. Date format and casting validation (if DATE type)
         if data_type == "DateType" or data_type.upper() == "DATE":
             umf_format = column.get("format", "YYYY-MM-DD")
             expectations.append(
@@ -329,7 +304,7 @@ class BaselineExpectationGenerator:
                     }
                 )
 
-        # 6. Timestamp casting validation (if DATETIME/TIMESTAMP type)
+        # 4. Timestamp casting validation (if DATETIME/TIMESTAMP type)
         if data_type in ("TimestampType", "DateTimeType") or data_type.upper() in (
             "DATETIME",
             "TIMESTAMP",
@@ -369,7 +344,7 @@ class BaselineExpectationGenerator:
                     }
                 )
 
-        # 7. Integer casting validation (if INTEGER type)
+        # 5. Integer casting validation (if INTEGER type)
         if data_type == "IntegerType" or data_type.upper() == "INTEGER":
             expectations.append(
                 {
@@ -383,7 +358,7 @@ class BaselineExpectationGenerator:
                 }
             )
 
-        # 8. Numeric casting validation (if FLOAT/DOUBLE/DECIMAL type)
+        # 6. Numeric casting validation (if FLOAT/DOUBLE/DECIMAL type)
         if data_type in ("FloatType", "DoubleType", "DecimalType") or data_type.upper() in (
             "FLOAT",
             "DOUBLE",
@@ -401,9 +376,84 @@ class BaselineExpectationGenerator:
                 }
             )
 
-        # 9. Domain type expectations (if applicable)
+        # 7. Domain type expectations (if applicable)
         domain_expectations = self.domain_type_generator.generate_domain_type_expectations(column)
         expectations.extend(domain_expectations)
+
+        # 8. Profiling-based expectations (if profiling data attached to column)
+        profiling_expectations = self._generate_profiling_expectations(column)
+        expectations.extend(profiling_expectations)
+
+        return expectations
+
+    def _generate_profiling_expectations(
+        self, column: dict[str, Any], strictness: str = "medium"
+    ) -> list[dict[str, Any]]:
+        """Generate expectations from profiling data attached to UMF column.
+
+        Args:
+        ----
+            column: Column dictionary from UMF with optional profiling data
+            strictness: Strictness level (reserved for future use)
+
+        Returns:
+        -------
+            List of expectation dictionaries derived from profiling statistics
+
+        """
+        expectations: list[dict[str, Any]] = []
+        profiling = column.get("profiling", {})
+        if not profiling:
+            return expectations
+
+        col_name = column["name"]
+
+        # Uniqueness from high cardinality
+        num_distinct = profiling.get("approximate_num_distinct")
+        num_records = profiling.get("num_records")
+        if num_distinct and num_records and num_distinct == num_records:
+            expectations.append(
+                {
+                    "type": "expect_column_values_to_be_unique",
+                    "kwargs": {"column": col_name},
+                    "meta": {
+                        "description": f"Column {col_name} appears unique based on profiling",
+                        "severity": "warning",
+                        "generated_from": "profiling",
+                    },
+                }
+            )
+
+        # Range from min/max
+        minimum = profiling.get("minimum")
+        maximum = profiling.get("maximum")
+        if minimum is not None and maximum is not None:
+            expectations.append(
+                {
+                    "type": "expect_column_values_to_be_between",
+                    "kwargs": {"column": col_name, "min_value": minimum, "max_value": maximum},
+                    "meta": {
+                        "description": f"Column {col_name} values between {minimum} and {maximum} based on profiling",
+                        "severity": "warning",
+                        "generated_from": "profiling",
+                    },
+                }
+            )
+
+        # Not-null from high completeness
+        completeness = profiling.get("completeness")
+        if completeness is not None and completeness > 0.99:
+            expectations.append(
+                {
+                    "type": "expect_column_values_to_not_be_null",
+                    "kwargs": {"column": col_name},
+                    "meta": {
+                        "description": f"Column {col_name} has {completeness:.1%} completeness in profiling",
+                        "severity": "warning",
+                        "generated_from": "profiling",
+                    },
+                }
+            )
 
         return expectations
 
