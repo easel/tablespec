@@ -67,6 +67,7 @@ from tablespec.type_mappings import (
 from tablespec.validation import GXExpectationProcessor
 
 from tablespec.changelog_generator import ChangelogGenerator
+from tablespec.compatibility import CompatibilityIssue, CompatibilityReport, check_compatibility
 from tablespec.excel_converter import ExcelToUMFConverter, UMFToExcelConverter
 from tablespec.inference.domain_types import DomainTypeInference, DomainTypeRegistry
 from tablespec.sample_data import GenerationConfig, SampleDataGenerator
@@ -160,6 +161,10 @@ __all__ = [
     # -- Change Management --
     "UMFDiff",
     "ChangelogGenerator",
+    # -- Compatibility Checking --
+    "check_compatibility",
+    "CompatibilityReport",
+    "CompatibilityIssue",
 ]
 
 # SparkToUmfMapper and TableValidator are available only if pyspark is installed (via tablespec[spark])
