@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from .relationship_resolver import RelationshipResolver
 
@@ -189,6 +189,8 @@ class SQLPlanGenerator:
         self,
         table_umf: UMF,
         related_umfs: dict[str, UMF],
+        *,
+        mode: Literal["views", "cte"] = "views",
     ) -> str:
         """Generate a complete SQL plan for a single target table.
 
@@ -196,10 +198,14 @@ class SQLPlanGenerator:
             table_umf: UMF metadata for the target table.
             related_umfs: Dict mapping table names to UMF models for all
                 tables that participate in derivations (source tables).
+            mode: Output format.  ``"views"`` (default) emits sequential
+                ``CREATE OR REPLACE TEMPORARY VIEW`` statements.
+                ``"cte"`` emits a single ``WITH ... SELECT`` statement
+                using Common Table Expressions.
 
         Returns:
-            Multi-statement SQL string creating temporary views that
-            culminate in a final view named after the target table.
+            Multi-statement SQL string (views mode) or a single CTE
+            statement (cte mode).
 
         Raises:
             ValueError: If the table name cannot be determined.
@@ -209,7 +215,60 @@ class SQLPlanGenerator:
         if not table_name:
             msg = "table_name could not be determined from table_umf"
             raise ValueError(msg)
-        return self._generate_table_sql(table_name, table_umf, related_umfs)
+        sql = self._generate_table_sql(table_name, table_umf, related_umfs)
+        if mode == "cte":
+            return self._convert_views_to_cte(sql)
+        return sql
+
+    # ------------------------------------------------------------------
+    # CTE conversion
+    # ------------------------------------------------------------------
+
+    _VIEW_PATTERN = re.compile(
+        r"CREATE\s+OR\s+REPLACE\s+TEMPORARY\s+VIEW\s+(\S+)\s+AS\s*\n",
+        re.IGNORECASE,
+    )
+
+    def _convert_views_to_cte(self, views_sql: str) -> str:
+        """Post-process views-mode SQL into a single ``WITH ... SELECT`` statement.
+
+        Each ``CREATE OR REPLACE TEMPORARY VIEW <name> AS`` block is
+        converted into a CTE entry.  SQL comment blocks between statements
+        are preserved inside the CTE body so traceability is maintained.
+        """
+        # Split on CREATE OR REPLACE TEMPORARY VIEW boundaries
+        parts = self._VIEW_PATTERN.split(views_sql)
+        # parts looks like: [preamble, name1, body1, name2, body2, ...]
+        if len(parts) < 3:
+            # No views found — return as-is
+            return views_sql
+
+        preamble = parts[0]
+        cte_entries: list[str] = []
+        last_name: str | None = None
+        seen_names: set[str] = set()
+
+        for i in range(1, len(parts), 2):
+            name = parts[i]
+            body = parts[i + 1] if i + 1 < len(parts) else ""
+
+            # Strip trailing semicolons and whitespace from the body
+            body = body.strip().rstrip(";").strip()
+
+            # Avoid duplicate CTE names (diamond dependencies)
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+
+            cte_entries.append(f"{name} AS (\n{body}\n)")
+            last_name = name
+
+        if not cte_entries or last_name is None:
+            return views_sql
+
+        cte_block = ",\n\n".join(cte_entries)
+        result = f"{preamble.rstrip()}\nWITH\n{cte_block}\nSELECT * FROM {last_name};\n"
+        return result
 
     # ------------------------------------------------------------------
     # Internal orchestration
@@ -1796,6 +1855,7 @@ def generate_sql_plan(
     *,
     template_vars: dict[str, str] | None = None,
     table_resolver: Callable[[str], str] | None = None,
+    mode: Literal["views", "cte"] = "views",
 ) -> str:
     """Generate a SQL execution plan for a single target table.
 
@@ -1806,16 +1866,18 @@ def generate_sql_plan(
         related_umfs: Dict mapping table names to UMF models for source tables.
         template_vars: Optional template variable substitutions.
         table_resolver: Optional callable to resolve table names.
+        mode: Output format — ``"views"`` (default) or ``"cte"``.
 
     Returns:
-        Multi-statement SQL string.
+        Multi-statement SQL string (views mode) or single CTE statement
+        (cte mode).
 
     """
     generator = SQLPlanGenerator(
         template_vars=template_vars,
         table_resolver=table_resolver,
     )
-    return generator.generate_for_table(table_umf, related_umfs)
+    return generator.generate_for_table(table_umf, related_umfs, mode=mode)
 
 
 __all__ = ["SQLPlanGenerator", "generate_sql_plan"]
