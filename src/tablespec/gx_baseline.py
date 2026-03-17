@@ -249,17 +249,17 @@ class BaselineExpectationGenerator:
         # 3. Nullability (from UMF nullable field, not profiling)
         nullable = column.get("nullable", {})
         if nullable:
-            # Check if required for any LOB
-            required_lobs = [lob for lob, is_null in nullable.items() if not is_null]
-            if required_lobs:
+            # Check if required for any context
+            required_contexts = [ctx for ctx, is_null in nullable.items() if not is_null]
+            if required_contexts:
                 expectations.append(
                     {
                         "type": "expect_column_values_to_not_be_null",
                         "kwargs": {"column": column_name},
                         "meta": {
-                            "description": f"Column {column_name} is required (nullable=false) for LOBs: {', '.join(required_lobs)}",
+                            "description": f"Column {column_name} is required (nullable=false) for contexts: {', '.join(required_contexts)}",
                             "severity": "critical",
-                            "lob": required_lobs,
+                            "contexts": required_contexts,
                             "generated_from": "baseline",
                         },
                     }

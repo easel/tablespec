@@ -4,12 +4,12 @@ import logging
 from typing import Any
 
 from tablespec.gx_baseline import BaselineExpectationGenerator
-
-logger = logging.getLogger(__name__)
 from tablespec.prompts.expectation_guide import (
     format_quick_reference,
     get_pending_decision_tree,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def should_generate_column_prompt(col: dict[str, Any]) -> bool:
@@ -185,8 +185,8 @@ def generate_column_validation_prompt(
         exp.get("meta", {}).get("generated_from") == "domain_type" for exp in baseline_expectations
     )
 
-    # Required LOBs
-    req_lobs = [lob for lob, is_null in sorted(nullable.items()) if not is_null]
+    # Required contexts (e.g. LOBs like MD/ME/MP, or any configurable keys)
+    req_contexts = [ctx for ctx, is_null in sorted(nullable.items()) if not is_null]
 
     # Build domain type hint section
     domain_type_section = ""
@@ -274,8 +274,8 @@ Use these for: column-to-filename metadata matching, cross-column validation wit
 **{col_name}** ({data_type}): {col_desc}
 """
 
-    if req_lobs:
-        prompt += f"- **Required for LOBs**: {', '.join(req_lobs)}\n"
+    if req_contexts:
+        prompt += f"- **Required for contexts**: {', '.join(req_contexts)}\n"
     if format_spec:
         prompt += f"- **Format**: {format_spec}\n"
     if max_length:

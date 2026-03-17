@@ -200,11 +200,19 @@ FileFormat = FileFormatSpec
 
 
 class Nullable(BaseModel):
-    """Nullable configuration per Line of Business."""
+    """Nullable configuration per context (e.g., Line of Business).
 
-    MD: bool | None = Field(default=None, description="Nullable for Medicaid")
-    MP: bool | None = Field(default=None, description="Nullable for Medicare Part D")
-    ME: bool | None = Field(default=None, description="Nullable for Medicare")
+    Accepts arbitrary context keys with boolean values. Common healthcare
+    contexts include MD (Medicaid), MP (Medicare Part D), ME (Medicare),
+    but any domain-specific keys are supported.
+
+    Examples:
+        Nullable(MD=False, MP=False, ME=False)      # Healthcare LOBs
+        Nullable(US=False, EU=True)                  # Regional contexts
+        Nullable(production=False, staging=True)      # Environment contexts
+    """
+
+    model_config = ConfigDict(extra="allow")
 
 
 class JoinViaSpec(BaseModel):
@@ -565,9 +573,9 @@ class UMFColumn(BaseModel):
         return v
 
     def is_nullable_for_all_contexts(self) -> bool:
-        """Check if column is nullable across all LOB contexts.
+        """Check if column is nullable across all contexts.
 
-        Returns True if nullable for all contexts or if nullable is True.
+        Returns True if nullable for all contexts or if nullable is not specified.
         Returns False if required (non-nullable) for any context.
         """
         if self.nullable is None:
@@ -576,17 +584,14 @@ class UMFColumn(BaseModel):
             return self.nullable
         if isinstance(self.nullable, dict):
             return all(self.nullable.values())
-        # If it's a Nullable model instance
-        return all(
-            [
-                getattr(self.nullable, "MD", True),
-                getattr(self.nullable, "MP", True),
-                getattr(self.nullable, "ME", True),
-            ]
-        )
+        # Nullable model instance — iterate all set fields (extra fields included)
+        fields = self.nullable.model_dump(exclude_none=True)
+        if not fields:
+            return True  # No contexts defined = nullable by default
+        return all(fields.values())
 
     def is_required_for_any_context(self) -> bool:
-        """Check if column is required (non-nullable) for any LOB context.
+        """Check if column is required (non-nullable) for any context.
 
         Returns True if required for at least one context.
         Returns False if nullable for all contexts.

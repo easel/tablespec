@@ -741,50 +741,12 @@
       "type": "object"
     },
     "Nullable": {
-      "description": "Nullable configuration per Line of Business.",
-      "properties": {
-        "MD": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Nullable for Medicaid",
-          "title": "Md"
-        },
-        "MP": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Nullable for Medicare Part D",
-          "title": "Mp"
-        },
-        "ME": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Nullable for Medicare",
-          "title": "Me"
-        }
+      "description": "Nullable configuration per context. Keys are context identifiers (e.g., MD, MP, ME for healthcare LOBs), values are booleans indicating whether the column is nullable in that context.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "boolean"
       },
-      "title": "Nullable",
-      "type": "object"
+      "title": "Nullable"
     },
     "OutgoingRelationship": {
       "description": "Outgoing foreign key relationship to another table.",

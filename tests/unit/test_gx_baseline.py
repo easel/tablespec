@@ -175,7 +175,7 @@ class TestBaselineExpectationGenerator:
         assert not_null_exp is not None
         assert not_null_exp["kwargs"]["column"] == "required_field"
         assert not_null_exp["meta"]["severity"] == "critical"
-        assert "medicare" in not_null_exp["meta"]["lob"]
+        assert "medicare" in not_null_exp["meta"]["contexts"]
 
     def test_nullability_expectation_optional(self, generator):
         """Test no nullability expectation when column is optional for all LOBs."""

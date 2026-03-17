@@ -23,10 +23,10 @@ class JSONSchema(TypedDict, total=False):
 
 
 def _resolve_nullable(nullable_value: Any) -> bool:
-    """Resolve nullable value from bool, dict (LOB-specific), or None.
+    """Resolve nullable value from bool, dict (context-specific), or None.
 
-    Handles both simple boolean nullable flags and LOB-specific nullable dicts
-    (e.g., {"MD": True, "MP": False, "ME": True} for Medicaid/Medicare).
+    Handles both simple boolean nullable flags and context-specific nullable dicts
+    (e.g., {"MD": True, "MP": False, "ME": True} or any arbitrary context keys).
 
     Returns True (nullable) by default when value is missing or unrecognized.
     """

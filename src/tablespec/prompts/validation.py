@@ -337,10 +337,10 @@ Generate expectations ONLY for:
         # Build compact single-line format: **COL** (TYPE): Desc. [Req: LOBs.] [Fmt: X.] [Ex: a,b.] [Note: X.]
         line = f"**{col_name}** ({data_type}): {col_desc}."
 
-        # Add required LOBs (only non-nullable)
-        req_lobs = [lob for lob, is_null in sorted(nullable.items()) if not is_null]
-        if req_lobs:
-            line += f" Req: {'/'.join(req_lobs)}."
+        # Add required contexts (only non-nullable)
+        req_contexts = [ctx for ctx, is_null in sorted(nullable.items()) if not is_null]
+        if req_contexts:
+            line += f" Req: {'/'.join(req_contexts)}."
 
         # Add format
         if format_spec:

@@ -675,7 +675,7 @@ The target field `{target_col_name}` has type `{target_col_type}`. Below are ALL
     # Build nullable section
     nullable_section = ""
     if nullable:
-        nullable_parts = [f"{lob}: {str(val).lower()}" for lob, val in sorted(nullable.items())]
+        nullable_parts = [f"{ctx}: {str(val).lower()}" for ctx, val in sorted(nullable.items())]
         if nullable_parts:
             nullable_section = f"\n- **Nullable**: {', '.join(nullable_parts)}"
 

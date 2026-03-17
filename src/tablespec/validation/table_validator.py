@@ -9,7 +9,7 @@ data quality assurance and generates detailed error reports in structured DataFr
 TableValidator validates data integrity across multiple dimensions:
 - **Schema compliance**: Column presence and structure
 - **Data type validation**: Type consistency with UMF specifications
-- **Nullable constraints**: LOB-specific null value validation
+- **Nullable constraints**: Context-aware null value validation (configurable contexts, e.g. MD/ME/MP)
 - **Business rules**: Healthcare domain-specific validation rules
 - **Uniqueness constraints**: Critical column duplicate detection
 - **Format validation**: Pattern matching (e.g., state codes)
@@ -21,7 +21,7 @@ TableValidator validates data integrity across multiple dimensions:
 - **UMF-Driven Validation**: Uses YAML-based Universal Metadata Format specifications
 - **Healthcare Domain Focus**: Built-in patterns for member IDs, LOBs, dates
 - **Structured Error Reporting**: Returns validation errors as structured DataFrames
-- **LOB-Aware Validation**: Supports Medicaid (MD), Medicare (ME), Marketplace (MP) specific rules
+- **Context-Aware Validation**: Supports configurable nullable contexts (e.g. Medicaid/MD, Medicare/ME, Marketplace/MP)
 - **Performance Optimized**: Uses SQL queries for efficient large-scale validation
 
 ## Usage Examples
@@ -121,8 +121,8 @@ Validates PySpark data types against UMF specifications:
 - **Type Mismatches**: Logs discrepancies with expected vs actual types (ERROR)
 
 ### 3. Nullable Constraints
-LOB-specific null value validation:
-- **Per-LOB Rules**: Different nullability for MD/ME/MP lines of business
+Context-aware null value validation:
+- **Per-Context Rules**: Different nullability per context (e.g. MD/ME/MP or any configurable keys)
 - **Null Violations**: Counts null values where not allowed (ERROR)
 
 ### 4. Business Rules Validation
@@ -144,7 +144,7 @@ LOB-specific null value validation:
 ### 5. Healthcare Domain Patterns
 - **Member ID Validation**: Detects member ID patterns and validates constraints
 - **Outreach Table Checks**: Validates essential columns for outreach tables
-- **LOB Validation**: Line of Business specific rules
+- **Context-Based Validation**: Context-specific rules (e.g. LOB-based)
 
 ## Error DataFrame Schema
 
@@ -194,7 +194,7 @@ columns:
   - name: "ClientMemberID"
     data_type: "VARCHAR"
     nullable:
-      MD: false  # Not nullable for Medicaid
+      MD: false  # Not nullable for Medicaid (context keys are configurable)
       ME: false  # Not nullable for Medicare
       MP: false  # Not nullable for Marketplace
     validation_rules:
@@ -646,6 +646,10 @@ class TableValidator:
     ) -> None:
         """Validate nullable constraints based on UMF specification.
 
+        Nullable contexts are configurable (e.g. MD/ME/MP for healthcare LOBs,
+        or any arbitrary context keys). When a LOB column exists in the DataFrame,
+        context-specific validation is performed; otherwise global validation applies.
+
         Args:
             df: DataFrame to validate
             umf: UMF specification
@@ -657,7 +661,7 @@ class TableValidator:
         temp_view = f"{table_name}_validation_temp"
         df.createOrReplaceTempView(temp_view)
 
-        # Check if table has LOB column for LOB-specific validation
+        # Check if table has LOB column for context-specific validation
         has_lob_column = "LOB" in df.columns
 
         for col_spec in umf.get("columns", []):
@@ -667,21 +671,21 @@ class TableValidator:
             if col_name not in df.columns:
                 continue  # Already handled in schema validation
 
-            # Check nullable constraints for each LOB if specified
-            for lob, is_nullable in nullable_spec.items():
-                if not is_nullable:  # Column should not be null for this LOB
+            # Check nullable constraints for each context
+            for context, is_nullable in nullable_spec.items():
+                if not is_nullable:  # Column should not be null for this context
                     # Build query based on whether LOB column exists
                     if has_lob_column:
-                        # LOB-specific validation for tables with LOB column
+                        # Context-specific validation for tables with LOB column
                         null_query = f"""
                         SELECT COUNT(*) as null_count
                         FROM {temp_view}
-                        WHERE {col_name} IS NULL AND LOB = '{lob}'
+                        WHERE {col_name} IS NULL AND LOB = '{context}'
                         """
                     else:
                         # Global validation for lookup/disposition tables without LOB
-                        # Only check once (on first LOB) to avoid duplicate checks
-                        if lob != next(iter(nullable_spec.keys())):
+                        # Only check once (on first context) to avoid duplicate checks
+                        if context != next(iter(nullable_spec.keys())):
                             continue
                         null_query = f"""
                         SELECT COUNT(*) as null_count
@@ -695,12 +699,12 @@ class TableValidator:
 
                         if null_count > 0:
                             error_msg = (
-                                f"Found {null_count} null values in '{col_name}' for LOB '{lob}'"
+                                f"Found {null_count} null values in '{col_name}' for context '{context}'"
                                 if has_lob_column
                                 else f"Found {null_count} null values in '{col_name}'"
                             )
                             rule_details = (
-                                f"Column must not be null for LOB '{lob}'"
+                                f"Column must not be null for context '{context}'"
                                 if has_lob_column
                                 else "Column must not be null"
                             )

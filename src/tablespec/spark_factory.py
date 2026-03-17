@@ -14,7 +14,7 @@ import logging
 import os
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 import warnings
 
 # Disable tqdm progress bars and suppress warnings BEFORE importing PySpark

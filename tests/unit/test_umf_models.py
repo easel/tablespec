@@ -41,6 +41,58 @@ class TestNullable:
         assert nullable.MD is False
         assert nullable.MP is None
 
+    def test_nullable_custom_contexts(self):
+        """Test Nullable with arbitrary custom context keys."""
+        nullable = Nullable(US=False, EU=True)
+        assert nullable.US is False
+        assert nullable.EU is True
+
+    def test_nullable_mixed_contexts(self):
+        """Test Nullable with both standard and custom keys."""
+        nullable = Nullable(MD=False, MP=True, US=False, EU=True)
+        assert nullable.MD is False
+        assert nullable.MP is True
+        assert nullable.US is False
+        assert nullable.EU is True
+
+    def test_nullable_model_dump_excludes_none(self):
+        """Test model_dump(exclude_none=True) only includes set fields."""
+        nullable = Nullable(MD=False, EU=True)
+        dumped = nullable.model_dump(exclude_none=True)
+        assert dumped == {"MD": False, "EU": True}
+
+        # Empty Nullable should dump to empty dict
+        nullable_empty = Nullable()
+        dumped_empty = nullable_empty.model_dump(exclude_none=True)
+        assert dumped_empty == {}
+
+    def test_is_nullable_for_all_contexts_custom(self):
+        """Test is_nullable_for_all_contexts with custom context keys on a UMFColumn."""
+        # All custom contexts nullable -> True
+        col_all_nullable = UMFColumn(
+            name="test_col",
+            data_type="VARCHAR",
+            nullable=Nullable(US=True, EU=True),
+        )
+        assert col_all_nullable.is_nullable_for_all_contexts() is True
+
+        # One custom context non-nullable -> False
+        col_mixed = UMFColumn(
+            name="test_col",
+            data_type="VARCHAR",
+            nullable=Nullable(US=False, EU=True),
+        )
+        assert col_mixed.is_nullable_for_all_contexts() is False
+        assert col_mixed.is_required_for_any_context() is True
+
+        # Mix of standard and custom contexts
+        col_standard_custom = UMFColumn(
+            name="test_col",
+            data_type="VARCHAR",
+            nullable=Nullable(MD=False, production=True),
+        )
+        assert col_standard_custom.is_nullable_for_all_contexts() is False
+
 
 class TestDerivationCandidate:
     """Test DerivationCandidate model."""

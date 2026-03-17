@@ -11,7 +11,6 @@ Excel format is designed for non-technical domain experts with:
 import contextlib
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -77,7 +76,10 @@ class ExcelConstants:
     # Table type options
     TABLE_TYPES: ClassVar[list[str]] = ["provided", "generated", "lookup"]
 
-    # LOB options
+    # Default nullable context keys for Excel column headers.
+    # These represent the default healthcare contexts (Medicaid/Marketplace/Medicare).
+    # The Excel format uses a fixed set of columns, so these serve as the default
+    # presentation layer even though the underlying Nullable model accepts arbitrary keys.
     LOBS: ClassVar[list[str]] = ["MD", "MP", "ME"]
 
     # Domain types

@@ -77,14 +77,14 @@ def _generate_column_validation_prompt_focused(
     format_spec = column_data.get("format", "")
     domain_type = column_data.get("domain_type")
 
-    # Required LOBs
-    req_lobs = [lob for lob, is_null in sorted(nullable.items()) if not is_null]
+    # Required contexts (e.g. LOBs like MD/ME/MP, or any configurable keys)
+    req_contexts = [ctx for ctx, is_null in sorted(nullable.items()) if not is_null]
 
     # Build auto-generated validations list
     auto_validations = [
         "- Column existence check",
         f"- Data type validation ({data_type})",
-        f"- Nullability constraints (required for: {', '.join(req_lobs) if req_lobs else 'none'})",
+        f"- Nullability constraints (required for: {', '.join(req_contexts) if req_contexts else 'none'})",
     ]
     if max_length:
         auto_validations.append(f"- Max length constraint ({max_length} characters)")
@@ -106,7 +106,7 @@ Generate validation constraints for a single column.
 - **Column**: {column_name}
 - **Type**: {data_type}
 - **Max Length**: {max_length or "N/A"}
-- **Required LOBs**: {", ".join(req_lobs) if req_lobs else "None"}
+- **Required Contexts**: {", ".join(req_contexts) if req_contexts else "None"}
 - **Description**: {col_desc}
 {f"- **Format**: {format_spec}" if format_spec else ""}
 
