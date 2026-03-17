@@ -617,7 +617,15 @@ class QualityCheckExecutor:
         score: QualityScore,
         thresholds: QualityThreshold | None,
     ) -> bool:
-        """Determine block-worthy conditions based on results and thresholds.
+        """Determine if pipeline should be blocked based on check results.
+
+        Blocks if:
+        - Any check with blocking=True and severity in (critical, error) has failed
+        - Failure count exceeds thresholds.max_failures (if configured)
+        - Critical failure count exceeds thresholds.max_critical_failures (if configured)
+        - Critical failure rate exceeds thresholds.max_critical_failure_percent
+        - Warning failure rate exceeds thresholds.max_warning_failure_percent
+        - Success rate falls below thresholds.min_success_rate
 
         Args:
             results: List of quality check results
@@ -626,19 +634,43 @@ class QualityCheckExecutor:
 
         Returns:
             True if pipeline should be blocked, False otherwise.
-            Currently always returns False (non-blocking mode).
 
         """
-        # TODO: Implement actual blocking behavior. Currently operates in non-blocking
-        # mode only - threshold breaches and blocking check failures are logged as
-        # warnings but never block the pipeline. To enable blocking, return True when
-        # threshold_breached is True or when blocking checks fail.
-        if any(not r.success and r.blocking for r in results):
-            self.logger.warning("Blocking quality check(s) failed (non-blocking mode)")
+        should_block = False
+
+        # Check individual blocking rules: block on failed checks that are
+        # marked blocking with critical or error severity
+        for result in results:
+            if not result.success and result.blocking and result.severity in ("critical", "error"):
+                self.logger.warning(
+                    f"Blocking check failed: {result.check_id} ({result.severity})"
+                )
+                should_block = True
 
         # Check thresholds if configured
         if thresholds:
             threshold_breached = False
+
+            # Check aggregate failure count threshold
+            if thresholds.max_failures is not None:
+                failure_count = sum(1 for r in results if not r.success)
+                if failure_count > thresholds.max_failures:
+                    self.logger.warning(
+                        f"Failure count {failure_count} exceeds threshold {thresholds.max_failures}"
+                    )
+                    threshold_breached = True
+
+            # Check critical failure count threshold
+            if thresholds.max_critical_failures is not None:
+                critical_count = sum(
+                    1 for r in results if not r.success and r.severity == "critical"
+                )
+                if critical_count > thresholds.max_critical_failures:
+                    self.logger.warning(
+                        f"Critical failure count {critical_count} exceeds threshold "
+                        f"{thresholds.max_critical_failures}"
+                    )
+                    threshold_breached = True
 
             # Check critical failure rate
             if (
@@ -676,6 +708,6 @@ class QualityCheckExecutor:
             # Update score with threshold breach status
             score.threshold_breached = threshold_breached
             if threshold_breached:
-                self.logger.warning("Quality thresholds breached (non-blocking mode)")
+                should_block = True
 
-        return False
+        return should_block
