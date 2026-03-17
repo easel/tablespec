@@ -82,8 +82,8 @@ class ExcelConstants:
     # presentation layer even though the underlying Nullable model accepts arbitrary keys.
     LOBS: ClassVar[list[str]] = ["MD", "MP", "ME"]
 
-    # Domain types
-    DOMAIN_TYPES: ClassVar[list[str]] = [
+    # Domain types - fallback list if registry is unavailable
+    _DEFAULT_DOMAIN_TYPES: ClassVar[list[str]] = [
         "member_id",
         "claim_id",
         "provider_id",
@@ -99,6 +99,22 @@ class ExcelConstants:
         "currency_amount",
         "account_number",
     ]
+
+    @staticmethod
+    def _get_domain_type_list() -> list[str]:
+        """Get domain types from registry, falling back to hardcoded defaults."""
+        try:
+            from tablespec.inference.domain_types import DomainTypeRegistry
+
+            registry = DomainTypeRegistry()
+            return sorted(registry.list_domain_types())
+        except Exception:
+            return sorted(ExcelConstants._DEFAULT_DOMAIN_TYPES)
+
+    @property
+    def DOMAIN_TYPES(self) -> list[str]:  # noqa: N802
+        """Domain types loaded dynamically from registry."""
+        return self._get_domain_type_list()
 
     # Rule types (Great Expectations expectation types - without "expect_" prefix)
     # Based on expectation_categories.json and expectation_parameters.json

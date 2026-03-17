@@ -6,11 +6,72 @@ columns with domain types, which are then consumed by Phase 4 (validation) and P
 """
 
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 import re
 from typing import Any
 
 import yaml
+
+
+COMMON_ABBREVIATIONS: dict[str, list[str]] = {
+    "mbr": ["member"],
+    "dt": ["date"],
+    "cd": ["code"],
+    "desc": ["description"],
+    "amt": ["amount"],
+    "qty": ["quantity"],
+    "num": ["number"],
+    "addr": ["address"],
+    "prov": ["provider"],
+    "clm": ["claim"],
+    "svc": ["service"],
+    "diag": ["diagnosis"],
+    "proc": ["procedure"],
+    "id": ["identifier", "id"],
+    "nm": ["name"],
+    "tp": ["type"],
+    "st": ["state", "status"],
+    "ct": ["count"],
+}
+
+
+def expand_column_name(name: str) -> list[str]:
+    """Expand abbreviations in column name to generate candidate names.
+
+    'mbr_dt' -> ['mbr_dt', 'member_dt', 'mbr_date', 'member_date']
+
+    Generates all combinations when multiple parts have abbreviations.
+    """
+    parts = name.lower().split("_")
+    # Build list of options per part: original + expansions
+    options_per_part: list[list[str]] = []
+    for part in parts:
+        if part in COMMON_ABBREVIATIONS:
+            options_per_part.append([part, *COMMON_ABBREVIATIONS[part]])
+        else:
+            options_per_part.append([part])
+
+    # Generate cartesian product of all part options
+    candidates = [name.lower()]
+    combos: list[list[str]] = [[]]
+    for options in options_per_part:
+        combos = [existing + [opt] for existing in combos for opt in options]
+    for combo in combos:
+        candidates.append("_".join(combo))
+
+    return list(dict.fromkeys(candidates))  # dedupe, preserve order
+
+
+@dataclass
+class InferenceResult:
+    """Structured result from domain type inference with explanation."""
+
+    domain_type: str | None
+    confidence: float
+    explanation: str
+    runner_up: str | None = None
+    runner_up_confidence: float = 0.0
 
 
 class DomainTypeRegistry:
@@ -19,21 +80,35 @@ class DomainTypeRegistry:
     Provides lookup and matching capabilities for domain type detection.
     """
 
-    def __init__(self, registry_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        registry_path: str | Path | None = None,
+        *,
+        registry_data: dict[str, Any] | None = None,
+    ) -> None:
         """Initialize domain type registry.
 
         Args:
             registry_path: Path to domain_types.yaml file. If None, uses default location.
+                Ignored if registry_data is provided.
+            registry_data: Pre-loaded registry dict (for testing). If provided,
+                skips file loading entirely.
 
         Raises:
-            FileNotFoundError: If registry file not found
-            ValueError: If registry YAML is invalid
+            FileNotFoundError: If registry file not found (when loading from file)
+            ValueError: If registry YAML is invalid or contains invalid regex patterns
 
         """
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.registry_path = registry_path or self._get_default_registry_path()
         self.domain_types: dict[str, dict[str, Any]] = {}
-        self._load_registry()
+
+        if registry_data is not None:
+            self.registry_path = None
+            self.domain_types = registry_data.get("domain_types", {})
+            self._validate_regex_patterns()
+        else:
+            self.registry_path = registry_path or self._get_default_registry_path()
+            self._load_registry()
 
     @staticmethod
     def _get_default_registry_path() -> Path:
@@ -57,6 +132,25 @@ class DomainTypeRegistry:
         except yaml.YAMLError as e:
             msg = f"Failed to parse domain type registry: {e}"
             raise ValueError(msg) from e
+
+        self._validate_regex_patterns()
+
+    def _validate_regex_patterns(self) -> None:
+        """Validate all sample_value_pattern regex patterns in the registry.
+
+        Raises:
+            ValueError: If any pattern is an invalid regex.
+
+        """
+        for type_name, type_def in self.domain_types.items():
+            detection = type_def.get("detection", {})
+            pattern = detection.get("sample_value_pattern")
+            if pattern:
+                try:
+                    re.compile(pattern)
+                except re.error as e:
+                    msg = f"Invalid regex in domain type '{type_name}' sample_value_pattern: {e}"
+                    raise ValueError(msg) from e
 
     def get_domain_type(self, name: str) -> dict[str, Any] | None:
         """Get domain type definition by name.
@@ -223,9 +317,77 @@ class DomainTypeInference:
             confidence_score is 0.0-1.0 where 1.0 is highest confidence
 
         """
-        candidates: dict[str, float] = {}
+        candidates = self._score_all_candidates(column_name, description, sample_values, data_type)
 
-        # Score each domain type based on detection rules
+        if not candidates:
+            return None, 0.0
+
+        # Return best match
+        best_match = max(candidates.items(), key=lambda x: x[1])
+        return best_match[0], best_match[1]
+
+    def infer_with_explanation(
+        self,
+        column_name: str,
+        data_type: str | None = None,
+        description: str | None = None,
+        sample_values: list[str] | None = None,
+    ) -> InferenceResult:
+        """Infer domain type with explanation of why it was chosen.
+
+        Args:
+            column_name: Column name to analyze
+            data_type: Data type of column (optional)
+            description: Column description (optional)
+            sample_values: Sample values for the column (optional)
+
+        Returns:
+            InferenceResult with domain type, confidence, explanation, and runner-up.
+
+        """
+        candidates = self._score_all_candidates(column_name, description, sample_values, data_type)
+
+        if not candidates:
+            return InferenceResult(
+                domain_type=None,
+                confidence=0.0,
+                explanation="No matching domain type found for column name patterns, "
+                "description keywords, or sample values.",
+            )
+
+        # Sort by score descending
+        sorted_candidates = sorted(candidates.items(), key=lambda x: x[1], reverse=True)
+        best_name, best_score = sorted_candidates[0]
+
+        # Build explanation
+        explanation_parts = self._build_explanation(
+            best_name, column_name, description, sample_values
+        )
+        explanation = "; ".join(explanation_parts)
+
+        # Runner-up
+        runner_up = None
+        runner_up_confidence = 0.0
+        if len(sorted_candidates) > 1:
+            runner_up, runner_up_confidence = sorted_candidates[1]
+
+        return InferenceResult(
+            domain_type=best_name,
+            confidence=best_score,
+            explanation=explanation,
+            runner_up=runner_up,
+            runner_up_confidence=runner_up_confidence,
+        )
+
+    def _score_all_candidates(
+        self,
+        column_name: str,
+        description: str | None,
+        sample_values: list[str] | None,
+        data_type: str | None,
+    ) -> dict[str, float]:
+        """Score all domain types and return those with positive scores."""
+        candidates: dict[str, float] = {}
         for domain_type_name in self.registry.list_domain_types():
             score = self._score_domain_type(
                 domain_type_name,
@@ -236,13 +398,72 @@ class DomainTypeInference:
             )
             if score > 0.0:
                 candidates[domain_type_name] = score
+        return candidates
 
-        if not candidates:
-            return None, 0.0
+    def _build_explanation(
+        self,
+        domain_type: str,
+        column_name: str,
+        description: str | None,
+        sample_values: list[str] | None,
+    ) -> list[str]:
+        """Build human-readable explanation for why a domain type was chosen."""
+        dt = self.registry.get_domain_type(domain_type)
+        if not dt or "detection" not in dt:
+            return [f"Matched domain type '{domain_type}'"]
 
-        # Return best match
-        best_match = max(candidates.items(), key=lambda x: x[1])
-        return best_match[0], best_match[1]
+        detection = dt["detection"]
+        parts: list[str] = []
+
+        # Check column name match
+        if "column_name_patterns" in detection:
+            expanded_names = expand_column_name(column_name)
+            for expanded in expanded_names:
+                name_lower = expanded.lower()
+                for pattern in detection["column_name_patterns"]:
+                    if pattern.lower() in name_lower or self._fuzzy_match(
+                        pattern.lower(), name_lower
+                    ):
+                        if expanded == column_name.lower():
+                            parts.append(
+                                f"Column name '{column_name}' matched pattern '{pattern}'"
+                            )
+                        else:
+                            parts.append(
+                                f"Column name '{column_name}' (expanded to '{expanded}') "
+                                f"matched pattern '{pattern}'"
+                            )
+                        break
+                if parts:
+                    break
+
+        # Check description match
+        if description and "description_keywords" in detection:
+            desc_lower = description.lower()
+            for keyword in detection["description_keywords"]:
+                if keyword.lower() in desc_lower:
+                    parts.append(f"Description matched keyword '{keyword}'")
+                    break
+
+        # Check sample values
+        if sample_values and "sample_value_pattern" in detection:
+            pattern = detection["sample_value_pattern"]
+            if pattern:
+                try:
+                    regex = re.compile(pattern)
+                    matches = sum(1 for v in sample_values if regex.match(str(v)))
+                    if matches >= len(sample_values) * 0.7:
+                        parts.append(
+                            f"Sample values matched pattern '{pattern}' "
+                            f"({matches}/{len(sample_values)})"
+                        )
+                except re.error:
+                    pass
+
+        if not parts:
+            parts.append(f"Matched domain type '{domain_type}'")
+
+        return parts
 
     def _score_domain_type(
         self,
@@ -274,12 +495,21 @@ class DomainTypeInference:
         max_score = 0.0
 
         # Check column name patterns (highest weight)
+        # Use expanded column names to handle abbreviations
         if "column_name_patterns" in detection:
             max_score += 0.6
-            name_lower = column_name.lower()
-            for pattern in detection["column_name_patterns"]:
-                if pattern.lower() in name_lower or self._fuzzy_match(pattern.lower(), name_lower):
-                    score += 0.6
+            expanded_names = expand_column_name(column_name)
+            matched = False
+            for expanded in expanded_names:
+                name_lower = expanded.lower()
+                for pattern in detection["column_name_patterns"]:
+                    if pattern.lower() in name_lower or self._fuzzy_match(
+                        pattern.lower(), name_lower
+                    ):
+                        score += 0.6
+                        matched = True
+                        break
+                if matched:
                     break
 
         # Check description keywords
@@ -333,4 +563,10 @@ class DomainTypeInference:
         return pattern in segments
 
 
-__all__ = ["DomainTypeInference", "DomainTypeRegistry"]
+__all__ = [
+    "COMMON_ABBREVIATIONS",
+    "DomainTypeInference",
+    "DomainTypeRegistry",
+    "InferenceResult",
+    "expand_column_name",
+]
