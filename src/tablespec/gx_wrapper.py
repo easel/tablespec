@@ -32,16 +32,19 @@ class GXWrapper:
             # Import and register our custom expectations
             from tablespec.validation.custom_gx_expectations import (
                 ExpectColumnDateToBeInCurrentYear,
+                ExpectColumnValuesToMatchDomainType,
                 ExpectColumnValuesToCastToType,
             )
 
             # Register the expectation classes
             registry.register_expectation(ExpectColumnValuesToCastToType)
             registry.register_expectation(ExpectColumnDateToBeInCurrentYear)
+            registry.register_expectation(ExpectColumnValuesToMatchDomainType)
 
             self.logger.debug(
                 "Registered custom expectations: expect_column_values_to_cast_to_type, "
-                "expect_column_date_to_be_in_current_year"
+                "expect_column_date_to_be_in_current_year, "
+                "expect_column_values_to_match_domain_type"
             )
         except ImportError as e:
             # GX or custom expectations not available
@@ -129,6 +132,7 @@ class GXWrapper:
                     custom_expectations = {
                         "expect_column_values_to_cast_to_type",
                         "expect_column_date_to_be_in_current_year",
+                        "expect_column_values_to_match_domain_type",
                     }
                     if exp_type in custom_expectations:
                         self.logger.debug(

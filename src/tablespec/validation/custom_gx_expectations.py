@@ -9,6 +9,7 @@ fail when Spark attempts to cast them.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
@@ -373,3 +374,207 @@ if GX_AVAILABLE:
                         "observed_value": f"Validation failed: {e!s}",
                     },
                 }
+
+    class ExpectColumnValuesToMatchDomainType(Expectation):  # type: ignore[misc]
+        """Validate column values against a domain type's validation rules.
+
+        Loads the domain type definition from the registry and checks that
+        all values comply with the validation spec (regex patterns, value sets, etc.).
+
+        Works with both Spark and Pandas DataFrames.
+
+        kwargs:
+            column: str - column name
+            domain_type: str - domain type name from registry (e.g., "us_state_code")
+            mostly: float - percentage of values that must match (default 1.0)
+        """
+
+        expectation_type = "expect_column_values_to_match_domain_type"
+
+        success_keys = (
+            "column",
+            "domain_type",
+            "mostly",
+        )
+
+        default_kwarg_values: ClassVar[dict[str, Any]] = {
+            "mostly": 1.0,
+            "result_format": "BASIC",
+        }
+
+        class Config:
+            extra = "allow"
+
+        def validate_configuration(
+            self, configuration: ExpectationConfiguration | None = None
+        ) -> None:
+            """Validate that configuration is correct."""
+            super().validate_configuration(configuration)  # type: ignore[arg-type]
+            if configuration:
+                domain_type = configuration.kwargs.get("domain_type")
+                if not domain_type:
+                    msg = "domain_type is required"
+                    raise ValueError(msg)
+
+        def _validate(
+            self,
+            metrics: dict,
+            runtime_configuration: dict | None = None,
+            execution_engine: Any = None,
+        ) -> dict:
+            """Validate column values against domain type rules.
+
+            Supports both Spark and Pandas execution engines.
+            """
+            column = self.column  # type: ignore[attr-defined]
+            domain_type_name = self.domain_type  # type: ignore[attr-defined]
+            mostly = getattr(self, "mostly", 1.0)  # type: ignore[attr-defined]
+
+            try:
+                # Get DataFrame - works for both Spark and Pandas engines
+                batch_data = execution_engine.batch_manager.active_batch.data.dataframe
+                if hasattr(batch_data, "toPandas"):
+                    df = batch_data.toPandas()
+                else:
+                    df = batch_data
+
+                return validate_domain_type(df, column, domain_type_name, mostly)
+
+            except Exception as e:
+                logger.exception(f"Failed to execute domain type validation: {e}")
+                return {
+                    "success": False,
+                    "result": {
+                        "element_count": 0,
+                        "unexpected_count": 0,
+                        "unexpected_percent": 0.0,
+                        "partial_unexpected_list": [],
+                        "observed_value": f"Validation failed: {e!s}",
+                    },
+                }
+
+
+def validate_domain_type(
+    df: Any,
+    column: str,
+    domain_type_name: str,
+    mostly: float = 1.0,
+) -> dict[str, Any]:
+    """Validate column values against a domain type's validation rules.
+
+    Standalone validation function that works with Pandas DataFrames.
+    Can be used as a shim when the full GX custom expectation framework
+    is not available or practical.
+
+    Args:
+        df: Pandas DataFrame containing the data.
+        column: Column name to validate.
+        domain_type_name: Domain type name from registry (e.g., "us_state_code").
+        mostly: Fraction of values that must match (default 1.0).
+
+    Returns:
+        GX-compatible result dict with 'success' and 'result' keys.
+
+    """
+    from tablespec.inference.domain_types import DomainTypeRegistry
+
+    registry = DomainTypeRegistry()
+    validations = registry.get_validation_specs(domain_type_name)
+
+    if not validations:
+        return {
+            "success": False,
+            "result": {
+                "element_count": 0,
+                "unexpected_count": 0,
+                "unexpected_percent": 0.0,
+                "partial_unexpected_list": [],
+                "observed_value": f"Domain type '{domain_type_name}' not found or has no validations",
+            },
+        }
+
+    # Get column values, dropping nulls
+    import pandas as pd
+
+    series = df[column].dropna()
+    total_count = len(series)
+
+    if total_count == 0:
+        return {
+            "success": True,
+            "result": {
+                "element_count": 0,
+                "unexpected_count": 0,
+                "unexpected_percent": 0.0,
+                "partial_unexpected_list": [],
+                "observed_value": "Column is entirely NULL",
+            },
+        }
+
+    # Collect unexpected values across all applicable validations
+    unexpected_mask = pd.Series(False, index=series.index)
+
+    for validation in validations:
+        vtype = validation.get("type", "")
+        kwargs = validation.get("kwargs", {})
+
+        if vtype == "expect_column_values_to_match_regex":
+            regex_pattern = kwargs.get("regex", "")
+            if regex_pattern:
+                pattern = re.compile(regex_pattern)
+                mask = ~series.astype(str).map(lambda v, p=pattern: bool(p.match(v)))  # type: ignore[misc]
+                unexpected_mask = unexpected_mask | mask
+
+        elif vtype == "expect_column_values_to_be_in_set":
+            value_set = kwargs.get("value_set", [])
+            if value_set:
+                # Convert value_set items to strings for comparison if series is string
+                str_values = [str(v) for v in value_set]
+                mask = ~series.astype(str).isin(str_values)
+                unexpected_mask = unexpected_mask | mask
+
+        elif vtype == "expect_column_value_lengths_to_be_between":
+            min_len = kwargs.get("min_value", 0)
+            max_len = kwargs.get("max_value", float("inf"))
+            lengths = series.astype(str).str.len()
+            mask = (lengths < min_len) | (lengths > max_len)
+            unexpected_mask = unexpected_mask | mask
+
+        elif vtype == "expect_column_values_to_be_between":
+            min_val = kwargs.get("min_value")
+            max_val = kwargs.get("max_value")
+            try:
+                numeric = pd.to_numeric(series, errors="coerce")
+                mask = pd.Series(False, index=series.index)
+                if min_val is not None:
+                    mask = mask | (numeric < min_val)
+                if max_val is not None:
+                    mask = mask | (numeric > max_val)
+                mask = mask | numeric.isna()
+                unexpected_mask = unexpected_mask | mask
+            except (ValueError, TypeError):
+                # If conversion fails, all values are unexpected
+                unexpected_mask = unexpected_mask | pd.Series(True, index=series.index)
+
+        # Skip type-check validations (expect_column_values_to_be_of_type)
+        # and existence checks (expect_column_to_exist) - not applicable to value validation
+
+    unexpected_count = int(unexpected_mask.sum())
+    unexpected_percent = (unexpected_count / total_count * 100) if total_count > 0 else 0.0
+
+    # Collect sample unexpected values
+    unexpected_values = series[unexpected_mask].head(10).tolist()
+
+    success_percent = 1.0 - (unexpected_count / total_count) if total_count > 0 else 1.0
+    success = success_percent >= mostly
+
+    return {
+        "success": success,
+        "result": {
+            "element_count": total_count,
+            "unexpected_count": unexpected_count,
+            "unexpected_percent": unexpected_percent,
+            "partial_unexpected_list": unexpected_values,
+            "observed_value": f"{success_percent * 100:.2f}% of values match domain type '{domain_type_name}'",
+        },
+    }

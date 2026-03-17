@@ -1,11 +1,5 @@
 """Great Expectations validation utilities."""
 
-from .gx_executor import (
-    ExpectationResult,
-    GXSuiteExecutor,
-    StagedExecutionResult,
-    SuiteExecutionResult,
-)
 from .gx_processor import GXExpectationProcessor
 
 # Define __all__ at module level for type checkers
@@ -13,12 +7,9 @@ __all__ = [
     "VALIDATION_ERROR_SCHEMA",
     "VALIDATION_RESULT_SCHEMA",
     "ExpectColumnValuesToCastToType",
-    "ExpectationResult",
+    "ExpectColumnValuesToMatchDomainType",
     "GXExpectationProcessor",
-    "GXSuiteExecutor",
     "GXTableValidator",
-    "StagedExecutionResult",
-    "SuiteExecutionResult",
     "TableValidator",
     "ValidationBlockingError",
     "ValidationDeltaWriter",
@@ -35,6 +26,7 @@ except ImportError:
 # Optional modules that may not be ported yet
 try:
     from .custom_gx_expectations import ExpectColumnValuesToCastToType
+    from .custom_gx_expectations import ExpectColumnValuesToMatchDomainType
 except (ImportError, ValueError):
     pass
 
