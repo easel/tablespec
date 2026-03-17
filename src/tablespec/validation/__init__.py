@@ -1,5 +1,11 @@
 """Great Expectations validation utilities."""
 
+from .gx_executor import (
+    ExpectationResult,
+    GXSuiteExecutor,
+    StagedExecutionResult,
+    SuiteExecutionResult,
+)
 from .gx_processor import GXExpectationProcessor
 
 # Define __all__ at module level for type checkers
@@ -7,8 +13,12 @@ __all__ = [
     "VALIDATION_ERROR_SCHEMA",
     "VALIDATION_RESULT_SCHEMA",
     "ExpectColumnValuesToCastToType",
+    "ExpectationResult",
     "GXExpectationProcessor",
+    "GXSuiteExecutor",
     "GXTableValidator",
+    "StagedExecutionResult",
+    "SuiteExecutionResult",
     "TableValidator",
     "ValidationBlockingError",
     "ValidationDeltaWriter",
