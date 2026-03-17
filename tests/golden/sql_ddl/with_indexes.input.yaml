@@ -1,0 +1,28 @@
+table_name: orders
+canonical_name: customer_orders
+metadata:
+  source_file_modified: "2025-01-01T00:00:00+00:00"
+description: Customer order records
+columns:
+  - name: order_id
+    data_type: INTEGER
+    nullable: false
+    description: Unique order identifier
+  - name: customer_id
+    data_type: INTEGER
+    nullable: false
+    description: FK to customers
+  - name: total
+    data_type: DECIMAL
+    precision: 12
+    scale: 2
+    nullable: false
+relationships:
+  suggested_indexes:
+    - name: idx_orders_customer
+      columns:
+        - customer_id
+    - name: idx_orders_total
+      columns:
+        - customer_id
+        - total

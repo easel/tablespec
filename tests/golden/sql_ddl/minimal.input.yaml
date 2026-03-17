@@ -1,0 +1,11 @@
+table_name: test_table
+metadata:
+  source_file_modified: "2025-01-01T00:00:00+00:00"
+columns:
+  - name: id
+    data_type: INTEGER
+    nullable: false
+  - name: name
+    data_type: VARCHAR
+    max_length: 100
+    nullable: true

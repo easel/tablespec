@@ -1,0 +1,31 @@
+table_name: all_types_table
+metadata:
+  source_file_modified: "2025-01-01T00:00:00+00:00"
+description: A table with all supported types
+columns:
+  - name: id
+    data_type: INTEGER
+    nullable: false
+  - name: amount
+    data_type: DECIMAL
+    precision: 10
+    scale: 2
+    nullable: true
+  - name: rate
+    data_type: FLOAT
+    nullable: true
+  - name: created_date
+    data_type: DATE
+    nullable: true
+  - name: updated_at
+    data_type: DATETIME
+    nullable: false
+  - name: is_active
+    data_type: BOOLEAN
+    nullable: true
+  - name: notes
+    data_type: TEXT
+    nullable: true
+  - name: code
+    data_type: VARCHAR
+    nullable: true
