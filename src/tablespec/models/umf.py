@@ -1132,6 +1132,106 @@ class IngestionConfig(BaseModel):
     )
 
 
+# =============================================================================
+# Unified Expectation Suite (ADR-005)
+# =============================================================================
+
+
+class ExpectationMeta(BaseModel):
+    """Structured metadata for a single expectation."""
+
+    stage: Literal["raw", "ingested", "unknown"] = "unknown"
+    severity: Literal["critical", "error", "warning", "info"] = "warning"
+    blocking: bool = False
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    generated_from: str | None = None  # "baseline", "profiling", "llm", "user"
+
+    def to_gx_meta(self) -> dict[str, Any]:
+        """Serialize to GX-compatible meta dict."""
+        meta: dict[str, Any] = {}
+        if self.stage != "unknown":
+            meta["validation_stage"] = self.stage
+        meta["severity"] = self.severity
+        if self.blocking:
+            meta["blocking"] = True
+        if self.description:
+            meta["description"] = self.description
+        if self.tags:
+            meta["tags"] = self.tags
+        if self.generated_from:
+            meta["generated_from"] = self.generated_from
+        return meta
+
+    @classmethod
+    def from_gx_meta(
+        cls, meta: dict[str, Any], expectation_type: str | None = None
+    ) -> "ExpectationMeta":
+        """Parse from GX meta dict. Auto-classifies stage from expectation_type if not in meta."""
+        stage = meta.get("validation_stage", "unknown")
+        if stage == "unknown" and expectation_type:
+            stage = classify_validation_type(expectation_type)
+        return cls(
+            stage=stage,
+            severity=meta.get("severity", "warning"),
+            blocking=meta.get("blocking", False),
+            description=meta.get("description"),
+            tags=meta.get("tags", []),
+            generated_from=meta.get("generated_from"),
+        )
+
+
+class Expectation(BaseModel):
+    """A single validation expectation with structured metadata."""
+
+    type: str
+    kwargs: dict[str, Any] = Field(default_factory=dict)
+    meta: ExpectationMeta = Field(default_factory=ExpectationMeta)
+
+    def to_gx_dict(self) -> dict[str, Any]:
+        """Convert to GX expectation dict format."""
+        return {
+            "type": self.type,
+            "kwargs": self.kwargs,
+            "meta": self.meta.to_gx_meta(),
+        }
+
+    @classmethod
+    def from_gx_dict(cls, d: dict[str, Any]) -> "Expectation":
+        """Parse from GX expectation dict."""
+        exp_type = d.get("type", d.get("expectation_type", ""))
+        raw_meta = d.get("meta", {})
+        return cls(
+            type=exp_type,
+            kwargs=d.get("kwargs", {}),
+            meta=ExpectationMeta.from_gx_meta(raw_meta, expectation_type=exp_type),
+        )
+
+
+class ExpectationSuite(BaseModel):
+    """Unified collection of all expectations for a table, classified by stage."""
+
+    expectations: list[Expectation] = Field(default_factory=list)
+    thresholds: dict[str, Any] | None = None
+    alert_config: dict[str, Any] | None = None
+    pending: list[Expectation] = Field(default_factory=list)
+
+    @property
+    def raw(self) -> list[Expectation]:
+        """Expectations for Bronze.Raw stage."""
+        return [e for e in self.expectations if e.meta.stage == "raw"]
+
+    @property
+    def ingested(self) -> list[Expectation]:
+        """Expectations for Bronze.Ingested stage."""
+        return [e for e in self.expectations if e.meta.stage == "ingested"]
+
+    @property
+    def unclassified(self) -> list[Expectation]:
+        """Expectations with unknown stage."""
+        return [e for e in self.expectations if e.meta.stage == "unknown"]
+
+
 class UMF(BaseModel):
     """Universal Metadata Format model."""
 
@@ -1191,6 +1291,10 @@ class UMF(BaseModel):
     quality_checks: QualityChecks | None = Field(
         default=None,
         description="Post-ingestion data quality checks for fitness assessment",
+    )
+    expectations: ExpectationSuite | None = Field(
+        default=None,
+        description="Unified expectation suite (replaces validation_rules + quality_checks)",
     )
     relationships: Relationships | None = Field(
         default=None, description="Table relationships added by Phase 4"

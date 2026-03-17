@@ -5,6 +5,9 @@ from tablespec.gx_constraint_extractor import GXConstraintExtractor
 from tablespec.models import (
     UMF,
     Cardinality,
+    Expectation,
+    ExpectationMeta,
+    ExpectationSuite,
     DerivationCandidate,
     FileFormat,
     FileFormatSpec,
@@ -116,6 +119,9 @@ __all__ = [
     "should_generate_column_prompt",
     # -- Supporting Model Classes --
     "Cardinality",
+    "Expectation",
+    "ExpectationMeta",
+    "ExpectationSuite",
     "DerivationCandidate",
     "FileFormat",
     "FileFormatSpec",
