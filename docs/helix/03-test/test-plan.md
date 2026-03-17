@@ -88,6 +88,48 @@ Two-tier testing: unit tests for pure Python logic and integration tests for end
 - `gx_wrapper.py` - GX wrapper utilities
 - `validator.py` - Unified validator
 
+## Planned Improvements
+
+### Testing Infrastructure Gaps (FEAT-016)
+
+- **No lightweight GX execution**: All GX expectation tests require PySpark (JVM startup, heavyweight deps). Need DuckDB-backed harness (ADR-006) for sub-second GX test feedback.
+- **No property-based testing for UMF generators**: Hypothesis is only used for YAML formatter fuzzing (`test_yaml_formatter_fuzzing.py`). UMF model generation, schema generators, and type mappings lack property tests.
+- **No golden file testing pattern**: Schema generator outputs are tested with inline assertions. Need auto-discovered golden files for human-verifiable outputs with unified diff on failure.
+- **No convention for test-first development**: No `@pytest.mark.xfail` pattern for writing executable specs before implementation.
+- **No fast test marker**: No way to run only sub-second tests (`@pytest.mark.fast`) for rapid iteration during development.
+
+### Validation Pipeline Gaps (FEAT-017)
+
+- **`classify_validation_type()` never called**: The function exists but the validation pipeline does not use it -- expectations are not classified by stage during execution.
+- **`BaselineExpectationGenerator` generates redundant types**: Produces `expect_column_to_exist` and `expect_column_values_to_be_of_type` which are redundant in context (existence implied by other column expectations, type checking meaningless at raw stage).
+- **No executor for `validation_rules`**: Only `quality_checks` has an executor (`quality/executor.py`). Raw-stage validation rules have no execution path.
+- **Blocking behavior always returns `False`**: `should_block_pipeline()` in `quality/executor.py` is stubbed out, never actually blocking regardless of severity or failure count.
+- **No validation result reporting**: Validation results are raw GX output with no summarization, formatting, or structured failure details.
+
+### SQL CTE Mode Testing (FEAT-019)
+
+- **Semantic equivalence testing**: Both view and CTE modes produce identical query results when executed against DuckDB with identical source data.
+- **Golden file tests**: ~15 cases covering linear chains, diamond dependencies, fan-out/fan-in patterns.
+- **CTE deduplication verification**: Diamond dependencies emit each CTE once, referenced multiple times.
+
+### Domain Type Testing (FEAT-020)
+
+- **Abbreviation expansion**: Property tests that `expand_column_name()` produces valid candidates for all abbreviation combinations.
+- **InferenceResult consistency**: Property test that `InferenceResult.confidence` is always between 0.0 and 1.0, and `runner_up` differs from `domain_type`.
+- **Registry validation**: Test that invalid regex patterns in `domain_types.yaml` raise `ValueError` on load.
+
+### Compatibility Checker Testing (FEAT-022)
+
+- **Hypothesis properties**: Reflexivity (UMF compatible with itself), addition safety (nullable column add is backward-compatible), removal detection (column removal is breaking).
+- **Rename-with-alias**: Verify that column renames with alias coverage are reported as info, not breaking.
+- **Golden files**: ~15 cases covering type widening/narrowing, nullable changes per context, column add/remove, length/precision changes.
+
+### Authoring Tools Testing (FEAT-023)
+
+- **LLM response applier**: Deduplication, stage classification, invalid expectation rejection, and sample data validation against GX harness.
+- **CLI mutation commands**: Pure function tests for column CRUD and validation management.
+- **Preview command**: Staged display formatting and `--against` dry-run via DuckDB harness.
+
 ## Running Tests
 
 ```bash

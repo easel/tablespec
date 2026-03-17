@@ -1,0 +1,51 @@
+# FEAT-020: Domain Type System Improvements
+
+**Status**: Proposed
+**Priority**: Medium
+
+## Description
+
+Improvements to the domain type inference system for better matching accuracy, richer results, and consistency across the codebase.
+
+## Components
+
+### Abbreviation Expansion (`src/tablespec/inference/domain_types.py`)
+
+`COMMON_ABBREVIATIONS` dict mapping healthcare data abbreviations to full words:
+
+```python
+COMMON_ABBREVIATIONS = {
+    "mbr": "member", "dt": "date", "cd": "code", "desc": "description",
+    "nm": "name", "addr": "address", "nbr": "number", "amt": "amount",
+    "qty": "quantity", "pct": "percent", "ind": "indicator", "typ": "type",
+    "sts": "status", "eff": "effective", "exp": "expiration", ...
+}
+```
+
+`expand_column_name()` generates candidate names for fuzzy matching, improving inference accuracy on abbreviated column names like `mbr_eff_dt` -> `member_effective_date`.
+
+### Confidence-Ranked Results with Explanation (`src/tablespec/inference/domain_types.py`)
+
+`infer_domain_type()` currently returns `tuple[str | None, float]` (type + confidence). Replace this with a structured `InferenceResult` that adds explanation and runner_up fields:
+
+```python
+@dataclass
+class InferenceResult:
+    domain_type: str        # Best match
+    confidence: float       # 0.0 - 1.0
+    explanation: str        # Which signals matched (name pattern, value regex, etc.)
+    runner_up: str | None   # Second-best match for ambiguous cases
+```
+
+### Excel Converter Registry Sync (`src/tablespec/excel_converter.py`)
+
+Excel dropdown for domain types currently reads from a hardcoded 14-type list. Update to read from `DomainTypeRegistry` instead, making all 41+ domain types available in the Excel authoring workflow.
+
+### Regex Validation on Registry Load (`src/tablespec/inference/domain_types.py`)
+
+Invalid regex patterns in `domain_types.yaml` currently fail silently during inference. Change to raise `ValueError` on registry load, catching configuration errors early.
+
+## Source
+
+- `src/tablespec/inference/domain_types.py`
+- `src/tablespec/excel_converter.py`
