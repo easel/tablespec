@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted (spike completed 2026-03-17)
 
 ## Context
 
@@ -10,31 +10,36 @@ Testing GX expectations currently requires PySpark, which brings JVM startup cos
 
 Great Expectations supports three execution engines:
 
-- **Pandas**: Pure Python, but different null handling, type coercion, and mutability semantics from Spark SQL.
+- **Pandas**: Pure Python, lightweight.
 - **Spark**: Production-accurate but heavyweight.
-- **SqlAlchemy**: SQL semantics close to Spark SQL. DuckDB provides a pip-installable SqlAlchemy backend (`duckdb:///:memory:`) with no system dependencies.
+- **SqlAlchemy**: SQL semantics, but DuckDB dialect has compatibility gaps with GX's metric bundling.
 
 GX does NOT support Polars as an execution engine.
 
-DuckDB via SqlAlchemy provides the closest semantic match to Spark SQL for testing purposes: proper NULL propagation, SQL-standard type coercion, and immutable query semantics.
-
 ## Decision
 
-Use Great Expectations with DuckDB via SqlAlchemy (`duckdb:///:memory:`) as the lightweight test and non-Spark execution engine.
+Use a **hybrid DuckDB + GX Pandas** approach for lightweight test and non-Spark validation:
 
-A proof-of-concept spike must be completed before adoption. The spike must confirm:
+1. **DuckDB** for fast data loading and SQL-based transformations (raw/ingested stage simulation).
+2. **GX Pandas execution engine** for expectation evaluation against the resulting DataFrames.
 
-1. GX 1.6+ SqlAlchemy datasource creation with DuckDB connection string.
-2. Batch loading from CSV and Parquet files.
-3. Expectation execution with correct results.
-4. Result format compatibility with existing validation reporting code.
+### Spike Results
 
-If the spike fails, fall back to Pandas execution engine (known to work with GX) and accept semantic differences from Spark.
+The proof-of-concept spike (2026-03-17) found:
+
+- **GX SqlAlchemy + DuckDB: DOES NOT WORK.** GX 1.15.1's `SqlAlchemyExecutionEngine.resolve_metric_bundle` hits `IndexError: list index out of range` when executing bundled metric queries against DuckDB. The DuckDB SqlAlchemy dialect works for basic SQL, but GX's internal metric batching is incompatible.
+
+- **DuckDB → Pandas DataFrame → GX Pandas engine: WORKS PERFECTLY.** The pattern:
+  1. Load data with `duckdb.connect()` and `con.execute(...).df()` to get a Pandas DataFrame.
+  2. Hand the DataFrame to GX via `context.data_sources.add_pandas()` + `add_dataframe_asset()`.
+  3. Run expectations against the Pandas batch.
+
+All tested expectation types (`expect_column_values_to_not_be_null`, `expect_column_values_to_be_in_set`, `expect_column_value_lengths_to_be_between`) work correctly with proper pass/fail behavior.
 
 ### Raw vs Ingested Stage Handling
 
-- **Raw stage**: `read_csv('data.csv', all_varchar=true)` -- all columns loaded as VARCHAR, matching Bronze.Raw semantics.
-- **Ingested stage**: `TRY_CAST` to UMF-declared types -- cast failures become NULL, detectable as validation errors matching Bronze.Ingested semantics.
+- **Raw stage**: `duckdb.execute("SELECT * FROM read_csv('data.csv', all_varchar=true)").df()` — all columns as VARCHAR strings, matching Bronze.Raw semantics.
+- **Ingested stage**: `duckdb.execute("SELECT TRY_CAST(col AS INTEGER) ... FROM ...")` — cast failures become NULL, detectable as validation errors matching Bronze.Ingested semantics.
 
 ### Dependency
 
@@ -45,13 +50,13 @@ If the spike fails, fall back to Pandas execution engine (known to work with GX)
 ### Positive
 
 - Sub-second GX test execution without JVM startup.
-- SQL semantics close to production Spark SQL, unlike Pandas.
+- DuckDB handles data loading/transformation efficiently (Parquet, CSV, SQL).
 - Enables FEAT-016 test harness and FEAT-023 `tablespec preview --against` command.
 - pip-installable with no system dependencies beyond Python.
 
 ### Negative
 
-- DuckDB SQL dialect is not identical to Spark SQL -- edge cases may diverge.
-- GX SqlAlchemy+DuckDB integration is unverified in this codebase; spike may fail.
+- Pandas execution engine has different null handling and type coercion from Spark — not semantically identical.
+- Two-step pattern (DuckDB load → Pandas GX) is more complex than direct SqlAlchemy would have been.
+- Tests passing on Pandas do not guarantee identical behavior on Spark — integration tests with Spark remain necessary for production confidence.
 - Adds another optional dependency group to manage.
-- Tests passing on DuckDB do not guarantee identical behavior on Spark -- integration tests with Spark remain necessary for production confidence.

@@ -186,14 +186,13 @@ class TestValidateExpectationType:
         assert is_valid is True
         assert error is None
 
-    def test_returns_false_when_gx_not_installed(self, validator):
-        """Should return False with message when GX not available."""
-        # Without GX installed, validate_expectation_type hits ImportError
+    def test_validates_known_expectation_type(self, validator):
+        """Should return True for a valid, known expectation type when GX is available."""
         is_valid, error = validator.validate_expectation_type(
             "expect_column_to_exist"
         )
-        assert is_valid is False
-        assert error is not None
+        assert is_valid is True
+        assert error is None
 
 
 class TestValidateAllTypesInSchema:

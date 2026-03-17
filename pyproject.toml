@@ -40,6 +40,11 @@ spark = [
     "pyspark>=4.0.0,<5.0.0",
     "pyarrow>=15.0.0,<18.0.0",
 ]
+duckdb = [
+    "duckdb>=1.0.0,<2.0.0",
+    "duckdb-engine>=0.15.0,<1.0.0",
+    "sqlalchemy>=2.0.0,<3.0.0",
+]
 
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
@@ -68,6 +73,8 @@ testpaths = ["tests"]
 markers = [
     "acceptance: acceptance criteria tests tied to user stories",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "fast: marks tests that complete in <100ms with no I/O or external deps",
+    "no_spark: marks tests that do not require PySpark",
 ]
 filterwarnings = [
     "error",
