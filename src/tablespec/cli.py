@@ -798,6 +798,106 @@ def domains_infer(
         raise typer.Exit(1)
 
 
+@app.command()
+def column_add(
+    table_path: Path = typer.Argument(
+        ...,
+        help="UMF file or directory",
+        exists=True,
+    ),
+    name: str = typer.Argument(..., help="Column name"),
+    data_type: str = typer.Argument(..., help="Column data type (e.g. VARCHAR, INTEGER)"),
+    nullable: bool = typer.Option(True, help="Whether column is nullable"),
+    length: int | None = typer.Option(None, help="Max length for VARCHAR columns"),
+    description: str | None = typer.Option(None, "--description", "-d", help="Column description"),
+) -> None:
+    """Add a column to a UMF table."""
+    from tablespec.authoring.mutations import add_column
+
+    loader = UMFLoader()
+    try:
+        umf = loader.load(table_path)
+        kwargs: dict = {}
+        if length is not None:
+            kwargs["length"] = length
+        if description is not None:
+            kwargs["description"] = description
+        if not nullable:
+            from tablespec.models.umf import Nullable
+
+            kwargs["nullable"] = Nullable()
+        result = add_column(umf, name, data_type, **kwargs)
+        fmt = loader.detect_format(table_path)
+        loader.save(result, table_path, fmt)
+        console.print(f"[green]Done.[/green] Added column '{name}' ({data_type}) to {table_path}")
+    except (ValueError, ValidationError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def column_rename(
+    table_path: Path = typer.Argument(
+        ...,
+        help="UMF file or directory",
+        exists=True,
+    ),
+    old_name: str = typer.Argument(..., help="Current column name"),
+    new_name: str = typer.Argument(..., help="New column name"),
+    keep_alias: bool = typer.Option(False, help="Keep old name as alias"),
+) -> None:
+    """Rename a column in a UMF table."""
+    from tablespec.authoring.mutations import rename_column
+
+    loader = UMFLoader()
+    try:
+        umf = loader.load(table_path)
+        result = rename_column(umf, old_name, new_name, keep_alias=keep_alias)
+        fmt = loader.detect_format(table_path)
+        loader.save(result, table_path, fmt)
+        msg = f"[green]Done.[/green] Renamed column '{old_name}' -> '{new_name}'"
+        if keep_alias:
+            msg += f" (alias '{old_name}' preserved)"
+        console.print(msg)
+    except (ValueError, ValidationError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def column_remove(
+    table_path: Path = typer.Argument(
+        ...,
+        help="UMF file or directory",
+        exists=True,
+    ),
+    name: str = typer.Argument(..., help="Column name to remove"),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+) -> None:
+    """Remove a column from a UMF table."""
+    from tablespec.authoring.mutations import remove_column
+
+    loader = UMFLoader()
+    try:
+        umf = loader.load(table_path)
+        if not force:
+            # Check column exists before prompting
+            if name not in {c.name for c in umf.columns}:
+                console.print(f"[red]Error:[/red] Column '{name}' not found")
+                raise typer.Exit(1)
+            confirmed = typer.confirm(f"Remove column '{name}' from {table_path}?")
+            if not confirmed:
+                console.print("[yellow]Cancelled.[/yellow]")
+                raise typer.Exit(0)
+        result = remove_column(umf, name)
+        fmt = loader.detect_format(table_path)
+        loader.save(result, table_path, fmt)
+        console.print(f"[green]Done.[/green] Removed column '{name}' from {table_path}")
+    except (ValueError, ValidationError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
 @app.callback(invoke_without_command=True)
 def version_callback(ctx: typer.Context) -> None:
     """Show version info or help."""
