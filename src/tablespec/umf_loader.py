@@ -212,9 +212,17 @@ class UMFLoader:
                 )  # Will be loaded via _load_column_centric using direct file read
 
         if path.is_dir():
-            # Check for split format (table.yaml + columns/ directory)
-            if (path / "table.yaml").exists() and (path / "columns").is_dir():
-                return UMFFormat.SPLIT
+            if not (path / "table.yaml").exists():
+                raise FileNotFoundError(
+                    f"Directory '{path}' exists but has no table.yaml. "
+                    f"Expected split-format UMF directory with table.yaml and columns/ subdirectory."
+                )
+            if not (path / "columns").is_dir():
+                raise FileNotFoundError(
+                    f"Directory '{path}' has table.yaml but no columns/ subdirectory. "
+                    f"Create a columns/ directory with one YAML file per column."
+                )
+            return UMFFormat.SPLIT
 
         msg = (
             f"Cannot detect format for {path}. "

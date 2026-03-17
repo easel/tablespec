@@ -26,7 +26,7 @@ class TestColumnCentricFormatDetection:
         (tmp_path / "schema.yaml").write_text("table_name: test_table")
 
         loader = UMFLoader()
-        with pytest.raises(ValueError, match="Cannot detect format"):
+        with pytest.raises(FileNotFoundError, match="no table.yaml"):
             loader.detect_format(tmp_path)
 
     def test_split_with_table_yaml_and_columns(self, tmp_path):
@@ -44,7 +44,7 @@ class TestColumnCentricFormatDetection:
         (tmp_path / "some_file.yaml").write_text("data: value")
 
         loader = UMFLoader()
-        with pytest.raises(ValueError, match="Cannot detect format"):
+        with pytest.raises(FileNotFoundError, match="no table.yaml"):
             loader.detect_format(tmp_path)
 
 
@@ -243,7 +243,7 @@ class TestColumnCentricLoader:
         (tmp_path / "other_file.txt").write_text("not yaml")
 
         loader = UMFLoader()
-        with pytest.raises(ValueError, match="Cannot detect format"):
+        with pytest.raises(FileNotFoundError, match="no table.yaml"):
             loader.load(tmp_path)
 
     def test_detect_format_requires_both_table_and_columns(self, tmp_path):
@@ -252,7 +252,7 @@ class TestColumnCentricLoader:
         (tmp_path / "table.yaml").write_text("table_name: test_table")
 
         loader = UMFLoader()
-        with pytest.raises(ValueError, match="Cannot detect format"):
+        with pytest.raises(FileNotFoundError, match="no columns"):
             loader.load(tmp_path)
 
     def test_column_centric_preserves_all_metadata(self, tmp_path):

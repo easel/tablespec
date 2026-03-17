@@ -48,7 +48,7 @@ class TestFormatDetection:
         """Test error handling for directory without table.yaml."""
         converter = UMFLoader()
 
-        with pytest.raises(ValueError, match="Cannot detect format"):
+        with pytest.raises(FileNotFoundError, match="no table.yaml"):
             converter.detect_format(tmp_path)
 
 

@@ -307,6 +307,40 @@ class UMFValidator:
         except Exception as e:
             errors.append(f"Business rule error: {e}")
 
+        # Expectation type validation
+        errors.extend(self._validate_expectation_types(umf_data))
+
+        return errors
+
+    def _validate_expectation_types(self, umf_data: dict[str, Any]) -> list[str]:
+        """Check that expectation types in validation_rules are recognized.
+
+        Args:
+        ----
+            umf_data: UMF data as dictionary
+
+        Returns:
+        -------
+            List of error messages for unknown expectation types
+
+        """
+        from tablespec.models.umf import (
+            INGESTED_QUALITY_CHECK_TYPES,
+            RAW_VALIDATION_TYPES,
+            REDUNDANT_VALIDATION_TYPES,
+        )
+
+        known_types = RAW_VALIDATION_TYPES | INGESTED_QUALITY_CHECK_TYPES | REDUNDANT_VALIDATION_TYPES
+        errors = []
+        for exp in umf_data.get("validation_rules", {}).get("expectations", []):
+            exp_type = exp.get("type", exp.get("expectation_type", ""))
+            if exp_type and exp_type not in known_types:
+                errors.append(f"Unknown expectation type '{exp_type}' in validation_rules.")
+        for check in umf_data.get("quality_checks", {}).get("checks", []):
+            exp = check.get("expectation", {})
+            exp_type = exp.get("type", exp.get("expectation_type", ""))
+            if exp_type and exp_type not in known_types:
+                errors.append(f"Unknown expectation type '{exp_type}' in quality_checks.")
         return errors
 
     def _validate_business_rules(self, umf_data: dict[str, Any]) -> None:
