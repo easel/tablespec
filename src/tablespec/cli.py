@@ -799,103 +799,68 @@ def domains_infer(
 
 
 @app.command()
-def column_add(
-    table_path: Path = typer.Argument(
-        ...,
-        help="UMF file or directory",
-        exists=True,
-    ),
-    name: str = typer.Argument(..., help="Column name"),
-    data_type: str = typer.Argument(..., help="Column data type (e.g. VARCHAR, INTEGER)"),
-    nullable: bool = typer.Option(True, help="Whether column is nullable"),
-    length: int | None = typer.Option(None, help="Max length for VARCHAR columns"),
-    description: str | None = typer.Option(None, "--description", "-d", help="Column description"),
+def preview(
+    table_path: str = typer.Argument(..., help="Path to UMF table (directory or file)"),
+    against: str = typer.Option(None, "--against", help="CSV file to validate against"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
-    """Add a column to a UMF table."""
-    from tablespec.authoring.mutations import add_column
+    """Preview validation expectations classified by stage."""
+    from tablespec.authoring.preview import generate_preview
+    from tablespec.gx_baseline import BaselineExpectationGenerator
 
     loader = UMFLoader()
-    try:
-        umf = loader.load(table_path)
-        kwargs: dict = {}
-        if length is not None:
-            kwargs["length"] = length
-        if description is not None:
-            kwargs["description"] = description
-        if not nullable:
-            from tablespec.models.umf import Nullable
+    umf = loader.load(table_path)
+    umf_data = umf.model_dump()
 
-            kwargs["nullable"] = Nullable()
-        result = add_column(umf, name, data_type, **kwargs)
-        fmt = loader.detect_format(table_path)
-        loader.save(result, table_path, fmt)
-        console.print(f"[green]Done.[/green] Added column '{name}' ({data_type}) to {table_path}")
-    except (ValueError, ValidationError) as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+    # Also generate baseline expectations
+    gen = BaselineExpectationGenerator()
+    baseline = gen.generate_baseline_expectations(umf_data)
 
+    # Merge baseline into a temporary copy for preview
+    all_exps = list(umf_data.get("validation_rules", {}).get("expectations", []))
+    all_exps.extend(baseline)
+    preview_data = {**umf_data, "validation_rules": {"expectations": all_exps}}
 
-@app.command()
-def column_rename(
-    table_path: Path = typer.Argument(
-        ...,
-        help="UMF file or directory",
-        exists=True,
-    ),
-    old_name: str = typer.Argument(..., help="Current column name"),
-    new_name: str = typer.Argument(..., help="New column name"),
-    keep_alias: bool = typer.Option(False, help="Keep old name as alias"),
-) -> None:
-    """Rename a column in a UMF table."""
-    from tablespec.authoring.mutations import rename_column
+    result = generate_preview(preview_data)
 
-    loader = UMFLoader()
-    try:
-        umf = loader.load(table_path)
-        result = rename_column(umf, old_name, new_name, keep_alias=keep_alias)
-        fmt = loader.detect_format(table_path)
-        loader.save(result, table_path, fmt)
-        msg = f"[green]Done.[/green] Renamed column '{old_name}' -> '{new_name}'"
-        if keep_alias:
-            msg += f" (alias '{old_name}' preserved)"
-        console.print(msg)
-    except (ValueError, ValidationError) as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+    # Display with Rich
+    table = RichTable(title=f"Validation Preview: {umf.table_name}")
+    table.add_column("Stage", style="bold")
+    table.add_column("Type")
+    table.add_column("Column")
+    table.add_column("Severity")
+    table.add_column("Source")
 
+    for exp in result.raw:
+        table.add_row(
+            "[green]RAW[/green]", exp.type, exp.column or "-", exp.severity, exp.generated_from or "-"
+        )
+    for exp in result.ingested:
+        table.add_row(
+            "[blue]INGESTED[/blue]",
+            exp.type,
+            exp.column or "-",
+            exp.severity,
+            exp.generated_from or "-",
+        )
+    for exp in result.redundant:
+        table.add_row(
+            "[dim]REDUNDANT[/dim]", exp.type, exp.column or "-", exp.severity, exp.generated_from or "-"
+        )
+    for exp in result.unknown:
+        table.add_row(
+            "[yellow]UNKNOWN[/yellow]",
+            exp.type,
+            exp.column or "-",
+            exp.severity,
+            exp.generated_from or "-",
+        )
 
-@app.command()
-def column_remove(
-    table_path: Path = typer.Argument(
-        ...,
-        help="UMF file or directory",
-        exists=True,
-    ),
-    name: str = typer.Argument(..., help="Column name to remove"),
-    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
-) -> None:
-    """Remove a column from a UMF table."""
-    from tablespec.authoring.mutations import remove_column
-
-    loader = UMFLoader()
-    try:
-        umf = loader.load(table_path)
-        if not force:
-            # Check column exists before prompting
-            if name not in {c.name for c in umf.columns}:
-                console.print(f"[red]Error:[/red] Column '{name}' not found")
-                raise typer.Exit(1)
-            confirmed = typer.confirm(f"Remove column '{name}' from {table_path}?")
-            if not confirmed:
-                console.print("[yellow]Cancelled.[/yellow]")
-                raise typer.Exit(0)
-        result = remove_column(umf, name)
-        fmt = loader.detect_format(table_path)
-        loader.save(result, table_path, fmt)
-        console.print(f"[green]Done.[/green] Removed column '{name}' from {table_path}")
-    except (ValueError, ValidationError) as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+    console.print(table)
+    console.print(
+        f"\nTotal: {result.total} ({len(result.raw)} raw, {len(result.ingested)} ingested, "
+        f"{len(result.redundant)} redundant, {len(result.unknown)} unknown)"
+    )
 
 
 @app.callback(invoke_without_command=True)
