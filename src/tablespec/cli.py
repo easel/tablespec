@@ -863,6 +863,69 @@ def preview(
     )
 
 
+@app.command()
+def apply_response(
+    table_path: str = typer.Argument(..., help="Path to UMF table (file or directory)"),
+    response_path: str = typer.Argument(..., help="Path to LLM response JSON file"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be applied without modifying the UMF"),
+) -> None:
+    """Apply LLM-generated validation expectations to a UMF table."""
+    import json
+
+    from tablespec.authoring.apply_response import apply_validation_response
+
+    try:
+        source = Path(table_path)
+        resp_file = Path(response_path)
+
+        if not source.exists():
+            console.print(f"[red]Error:[/red] UMF path not found: {source}")
+            raise typer.Exit(1)
+        if not resp_file.exists():
+            console.print(f"[red]Error:[/red] Response file not found: {resp_file}")
+            raise typer.Exit(1)
+
+        loader = UMFLoader()
+        umf = loader.load(source)
+
+        with resp_file.open(encoding="utf-8") as f:
+            raw = json.load(f)
+
+        if isinstance(raw, list):
+            response = raw
+        elif isinstance(raw, dict) and "expectations" in raw:
+            response = raw["expectations"]
+        else:
+            console.print("[red]Error:[/red] Response JSON must be a list or {expectations: [...]}.")
+            raise typer.Exit(1)
+
+        result = apply_validation_response(umf, response)
+
+        if result.added:
+            console.print(f"[green]Added:[/green] {len(result.added)} expectations")
+            for exp in result.added:
+                stage = exp.get("meta", {}).get("validation_stage", "?")
+                col = exp.get("kwargs", {}).get("column", "(table-level)")
+                console.print(f"  [{stage}] {exp.get('type', '?')} on {col}")
+        if result.deduplicated:
+            console.print(f"[yellow]Deduplicated:[/yellow] {len(result.deduplicated)} (already exist)")
+        if result.invalid:
+            console.print(f"[red]Invalid:[/red] {len(result.invalid)} rejected")
+            for exp, reason in result.invalid:
+                console.print(f"  {reason}")
+        if not result.added and not result.deduplicated and not result.invalid:
+            console.print("[dim]No expectations in response.[/dim]")
+        if dry_run:
+            console.print("\n[dim]Dry run - no changes written.[/dim]")
+
+    except json.JSONDecodeError as e:
+        console.print(f"[red]Error:[/red] Invalid JSON: {e}")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
 @app.callback(invoke_without_command=True)
 def version_callback(ctx: typer.Context) -> None:
     """Show version info or help."""
