@@ -943,6 +943,87 @@ def column_rename(
 
 
 @app.command()
+def validation_sync(
+    table_path: str = typer.Argument(..., help="Path to UMF table directory (split format)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would change without modifying files"),
+    clean_outdated: bool = typer.Option(False, "--clean-outdated", help="Remove outdated baseline expectations"),
+    aggressive: bool = typer.Option(False, "--aggressive", help="Upgrade unmarked expectations to baseline"),
+) -> None:
+    """Sync baseline expectations from UMF metadata.
+
+    Regenerates deterministic expectations from the current UMF definition
+    and reconciles them with existing expectations, preserving user customizations.
+
+    Examples:
+      tablespec validation-sync tables/claims/
+      tablespec validation-sync tables/claims/ --dry-run
+      tablespec validation-sync tables/claims/ --clean-outdated
+
+    """
+    from tablespec.sync_baseline import BaselineSyncer
+
+    try:
+        syncer = BaselineSyncer()
+        result = syncer.sync_table(
+            Path(table_path), dry_run=dry_run, aggressive=aggressive, clean_outdated=clean_outdated
+        )
+
+        if result.validations_added:
+            console.print(f"[green]Added:[/green] {result.validations_added} expectations")
+        if result.validations_upgraded:
+            console.print(f"[blue]Upgraded:[/blue] {result.validations_upgraded} expectations")
+        if result.validations_conflicts:
+            console.print(f"[yellow]Conflicts:[/yellow] {result.validations_conflicts} (preserved existing)")
+        if result.validations_severity_preserved:
+            console.print(f"[dim]Severity preserved:[/dim] {result.validations_severity_preserved}")
+        if not any([result.validations_added, result.validations_upgraded, result.validations_conflicts]):
+            console.print("[dim]Already in sync.[/dim]")
+        if dry_run:
+            console.print("\n[dim]Dry run — no changes written.[/dim]")
+
+    except (FileNotFoundError, ValueError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def validation_remove(
+    table_path: str = typer.Argument(..., help="Path to UMF table (file or directory)"),
+    expectation_type: str = typer.Option(..., "--type", "-t", help="Expectation type to remove"),
+    column: str = typer.Option(None, "--column", "-c", help="Column name (removes all matching if omitted)"),
+) -> None:
+    """Remove expectations matching a type and optional column.
+
+    Searches both validation_rules and quality_checks.
+
+    Examples:
+      tablespec validation-remove tables/claims/ --type expect_column_values_to_match_regex --column ssn
+      tablespec validation-remove table.yaml --type expect_column_values_to_be_unique
+
+    """
+    from tablespec.authoring.mutations import remove_expectation
+
+    try:
+        loader = UMFLoader()
+        umf = loader.load(table_path)
+        updated, count = remove_expectation(umf, expectation_type, column)
+
+        if count == 0:
+            console.print("[yellow]No matching expectations found.[/yellow]")
+            return
+
+        dest = Path(table_path)
+        fmt = UMFFormat.JSON if dest.suffix == ".json" else UMFFormat.SPLIT
+        loader.save(updated, dest, format=fmt)
+        target = f" on column '{column}'" if column else ""
+        console.print(f"[green]Removed[/green] {count} expectation(s) of type '{expectation_type}'{target}")
+
+    except (ValueError, FileNotFoundError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
 def explore(
     path: Path = typer.Argument(
         ...,
