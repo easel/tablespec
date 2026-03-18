@@ -1,17 +1,44 @@
 """Tests for ExpectColumnValuesToMatchDomainType custom GX expectation.
 
-Uses the standalone validate_domain_type() shim function to test domain type
-validation logic without requiring a full GX runtime or Spark. The shim
-function uses the same validation logic that the GX Expectation class delegates to.
+Uses the standalone validate_domain_type() function to test domain type
+validation logic. Requires a Spark/Sail session since the function
+operates on PySpark DataFrames.
 """
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
-pytestmark = pytest.mark.no_spark
+try:
+    from pysail.spark import SparkConnectServer
+    from pyspark.sql import SparkSession
 
-pd = pytest.importorskip("pandas")
+    _HAS_SAIL = True
+except ImportError:
+    _HAS_SAIL = False
+
+pytestmark = pytest.mark.skipif(not _HAS_SAIL, reason="pysail not available")
+
+
+@pytest.fixture(scope="module")
+def spark():
+    """Create a lightweight Sail session for testing."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=ResourceWarning)
+        server = SparkConnectServer()
+        server.start()
+        _, port = server.listening_address
+        session = (
+            SparkSession.builder.remote(f"sc://localhost:{port}")
+            .appName("test-domain-type")
+            .getOrCreate()
+        )
+        yield session
+        session.stop()
+        server.stop()
+
 
 from tablespec.validation.custom_gx_expectations import validate_domain_type  # noqa: E402
 
@@ -19,49 +46,49 @@ from tablespec.validation.custom_gx_expectations import validate_domain_type  # 
 class TestDomainTypeExpectationValueSet:
     """Tests for domain types validated via value_set (e.g., us_state_code, gender)."""
 
-    def test_valid_state_codes(self):
+    def test_valid_state_codes(self, spark):
         """All valid US state codes should pass."""
-        df = pd.DataFrame({"state": ["MD", "CA", "NY", "TX"]})
+        df = spark.createDataFrame([("MD",), ("CA",), ("NY",), ("TX",)], ["state"])
         result = validate_domain_type(df, "state", "us_state_code")
         assert result["success"]
         assert result["result"]["unexpected_count"] == 0
 
-    def test_invalid_state_code(self):
+    def test_invalid_state_code(self, spark):
         """Invalid state code should fail."""
-        df = pd.DataFrame({"state": ["MD", "XX", "NY"]})
+        df = spark.createDataFrame([("MD",), ("XX",), ("NY",)], ["state"])
         result = validate_domain_type(df, "state", "us_state_code")
         assert not result["success"]
         assert result["result"]["unexpected_count"] == 1
         assert "XX" in result["result"]["partial_unexpected_list"]
 
-    def test_all_invalid_state_codes(self):
+    def test_all_invalid_state_codes(self, spark):
         """All invalid state codes should report all as unexpected."""
-        df = pd.DataFrame({"state": ["XX", "ZZ", "QQ"]})
+        df = spark.createDataFrame([("XX",), ("ZZ",), ("QQ",)], ["state"])
         result = validate_domain_type(df, "state", "us_state_code")
         assert not result["success"]
         assert result["result"]["unexpected_count"] == 3
 
-    def test_valid_gender_codes(self):
+    def test_valid_gender_codes(self, spark):
         """Valid gender codes should pass."""
-        df = pd.DataFrame({"gender": ["M", "F", "U", "N"]})
+        df = spark.createDataFrame([("M",), ("F",), ("U",), ("N",)], ["gender"])
         result = validate_domain_type(df, "gender", "gender")
         assert result["success"]
 
-    def test_invalid_gender_code(self):
+    def test_invalid_gender_code(self, spark):
         """Invalid gender code should fail."""
-        df = pd.DataFrame({"gender": ["M", "X"]})
+        df = spark.createDataFrame([("M",), ("X",)], ["gender"])
         result = validate_domain_type(df, "gender", "gender")
         assert not result["success"]
 
-    def test_valid_lob_codes(self):
+    def test_valid_lob_codes(self, spark):
         """Valid line of business codes should pass."""
-        df = pd.DataFrame({"lob": ["MEDICAID", "MEDICARE", "MD", "ME"]})
+        df = spark.createDataFrame([("MEDICAID",), ("MEDICARE",), ("MD",), ("ME",)], ["lob"])
         result = validate_domain_type(df, "lob", "lob")
         assert result["success"]
 
-    def test_valid_yes_no_flags(self):
+    def test_valid_yes_no_flags(self, spark):
         """Valid Y/N flags should pass."""
-        df = pd.DataFrame({"flag": ["Y", "N", "Y", "N"]})
+        df = spark.createDataFrame([("Y",), ("N",), ("Y",), ("N",)], ["flag"])
         result = validate_domain_type(df, "flag", "yes_no_flag")
         assert result["success"]
 
@@ -69,46 +96,48 @@ class TestDomainTypeExpectationValueSet:
 class TestDomainTypeExpectationRegex:
     """Tests for domain types validated via regex (e.g., email, npi, zip_code)."""
 
-    def test_valid_emails(self):
+    def test_valid_emails(self, spark):
         """Valid email addresses should pass."""
-        df = pd.DataFrame({"email": ["user@example.com", "test@test.org"]})
+        df = spark.createDataFrame([("user@example.com",), ("test@test.org",)], ["email"])
         result = validate_domain_type(df, "email", "email")
         assert result["success"]
 
-    def test_invalid_email(self):
+    def test_invalid_email(self, spark):
         """Invalid email should fail."""
-        df = pd.DataFrame({"email": ["user@example.com", "not-an-email"]})
+        df = spark.createDataFrame([("user@example.com",), ("not-an-email",)], ["email"])
         result = validate_domain_type(df, "email", "email")
         assert not result["success"]
         assert result["result"]["unexpected_count"] == 1
 
-    def test_valid_npi(self):
+    def test_valid_npi(self, spark):
         """Valid 10-digit NPIs should pass."""
-        df = pd.DataFrame({"npi": ["1234567890", "9876543210"]})
+        df = spark.createDataFrame([("1234567890",), ("9876543210",)], ["npi"])
         result = validate_domain_type(df, "npi", "npi")
         assert result["success"]
 
-    def test_invalid_npi(self):
+    def test_invalid_npi(self, spark):
         """Short NPI should fail."""
-        df = pd.DataFrame({"npi": ["1234567890", "12345"]})
+        df = spark.createDataFrame([("1234567890",), ("12345",)], ["npi"])
         result = validate_domain_type(df, "npi", "npi")
         assert not result["success"]
 
-    def test_valid_zip_codes(self):
+    def test_valid_zip_codes(self, spark):
         """Valid ZIP codes should pass."""
-        df = pd.DataFrame({"zip": ["12345", "98765-4321"]})
+        df = spark.createDataFrame([("12345",), ("98765-4321",)], ["zip"])
         result = validate_domain_type(df, "zip", "zip_code")
         assert result["success"]
 
-    def test_invalid_zip_code(self):
+    def test_invalid_zip_code(self, spark):
         """Invalid ZIP code should fail."""
-        df = pd.DataFrame({"zip": ["12345", "ABC"]})
+        df = spark.createDataFrame([("12345",), ("ABC",)], ["zip"])
         result = validate_domain_type(df, "zip", "zip_code")
         assert not result["success"]
 
-    def test_valid_phone_numbers(self):
+    def test_valid_phone_numbers(self, spark):
         """Valid phone number formats should pass."""
-        df = pd.DataFrame({"phone": ["5551234567", "555-123-4567", "(555) 123-4567"]})
+        df = spark.createDataFrame(
+            [("5551234567",), ("555-123-4567",), ("(555) 123-4567",)], ["phone"]
+        )
         result = validate_domain_type(df, "phone", "phone_number")
         assert result["success"]
 
@@ -116,15 +145,15 @@ class TestDomainTypeExpectationRegex:
 class TestDomainTypeExpectationLengthBased:
     """Tests for domain types validated via length constraints."""
 
-    def test_valid_address(self):
+    def test_valid_address(self, spark):
         """Valid address lengths should pass."""
-        df = pd.DataFrame({"addr": ["123 Main St", "456 Oak Ave"]})
+        df = spark.createDataFrame([("123 Main St",), ("456 Oak Ave",)], ["addr"])
         result = validate_domain_type(df, "addr", "address_line_1")
         assert result["success"]
 
-    def test_empty_address_fails(self):
+    def test_empty_address_fails(self, spark):
         """Empty string address should fail (min_value=1)."""
-        df = pd.DataFrame({"addr": ["123 Main St", ""]})
+        df = spark.createDataFrame([("123 Main St",), ("",)], ["addr"])
         result = validate_domain_type(df, "addr", "address_line_1")
         assert not result["success"]
 
@@ -132,17 +161,17 @@ class TestDomainTypeExpectationLengthBased:
 class TestDomainTypeExpectationMostly:
     """Tests for the 'mostly' threshold parameter."""
 
-    def test_mostly_threshold_passes(self):
+    def test_mostly_threshold_passes(self, spark):
         """Should pass when enough values match the mostly threshold."""
         # 3 out of 4 valid = 75%
-        df = pd.DataFrame({"state": ["MD", "CA", "NY", "XX"]})
+        df = spark.createDataFrame([("MD",), ("CA",), ("NY",), ("XX",)], ["state"])
         result = validate_domain_type(df, "state", "us_state_code", mostly=0.7)
         assert result["success"]
 
-    def test_mostly_threshold_fails(self):
+    def test_mostly_threshold_fails(self, spark):
         """Should fail when not enough values match the mostly threshold."""
         # 1 out of 4 valid = 25%
-        df = pd.DataFrame({"state": ["MD", "XX", "ZZ", "QQ"]})
+        df = spark.createDataFrame([("MD",), ("XX",), ("ZZ",), ("QQ",)], ["state"])
         result = validate_domain_type(df, "state", "us_state_code", mostly=0.5)
         assert not result["success"]
 
@@ -150,30 +179,32 @@ class TestDomainTypeExpectationMostly:
 class TestDomainTypeExpectationEdgeCases:
     """Tests for edge cases and error handling."""
 
-    def test_all_null_column(self):
+    def test_all_null_column(self, spark):
         """Column with all nulls should pass (nothing to validate)."""
-        df = pd.DataFrame({"state": [None, None, None]})
+        df = spark.createDataFrame([(None,), (None,), (None,)], ["state: string"])
+        # Rename to get proper column name (schema trick for nullable string)
+        df = spark.createDataFrame([(None,), (None,), (None,)], "state: string")
         result = validate_domain_type(df, "state", "us_state_code")
         assert result["success"]
         assert result["result"]["element_count"] == 0
 
-    def test_mixed_nulls_and_valid(self):
+    def test_mixed_nulls_and_valid(self, spark):
         """Nulls should be excluded from validation; valid values pass."""
-        df = pd.DataFrame({"state": ["MD", None, "CA", None]})
+        df = spark.createDataFrame([("MD",), (None,), ("CA",), (None,)], ["state"])
         result = validate_domain_type(df, "state", "us_state_code")
         assert result["success"]
         assert result["result"]["element_count"] == 2
 
-    def test_unknown_domain_type(self):
+    def test_unknown_domain_type(self, spark):
         """Unknown domain type should fail with descriptive message."""
-        df = pd.DataFrame({"col": ["a", "b"]})
+        df = spark.createDataFrame([("a",), ("b",)], ["col"])
         result = validate_domain_type(df, "col", "nonexistent_domain_type")
         assert not result["success"]
         assert "not found" in result["result"]["observed_value"]
 
-    def test_result_structure(self):
+    def test_result_structure(self, spark):
         """Result should contain standard GX result keys."""
-        df = pd.DataFrame({"state": ["MD"]})
+        df = spark.createDataFrame([("MD",)], ["state"])
         result = validate_domain_type(df, "state", "us_state_code")
         assert "success" in result
         assert "result" in result
@@ -184,10 +215,11 @@ class TestDomainTypeExpectationEdgeCases:
         assert "partial_unexpected_list" in inner
         assert "observed_value" in inner
 
-    def test_unexpected_values_limited_to_10(self):
+    def test_unexpected_values_limited_to_10(self, spark):
         """Partial unexpected list should be limited to 10 items."""
         # Create 20 invalid values
-        df = pd.DataFrame({"state": [f"X{i}" for i in range(20)]})
+        rows = [(f"X{i}",) for i in range(20)]
+        df = spark.createDataFrame(rows, ["state"])
         result = validate_domain_type(df, "state", "us_state_code")
         assert not result["success"]
         assert len(result["result"]["partial_unexpected_list"]) <= 10
@@ -196,14 +228,14 @@ class TestDomainTypeExpectationEdgeCases:
 class TestDomainTypeExpectationMultipleValidations:
     """Tests for domain types with multiple validation rules."""
 
-    def test_calendar_year_valid(self):
+    def test_calendar_year_valid(self, spark):
         """Valid calendar years should pass both type and range checks."""
-        df = pd.DataFrame({"year": [2020, 2021, 2025]})
+        df = spark.createDataFrame([(2020,), (2021,), (2025,)], ["year"])
         result = validate_domain_type(df, "year", "calendar_year")
         assert result["success"]
 
-    def test_calendar_year_out_of_range(self):
+    def test_calendar_year_out_of_range(self, spark):
         """Calendar year outside 1900-2100 should fail."""
-        df = pd.DataFrame({"year": [2020, 1800]})
+        df = spark.createDataFrame([(2020,), (1800,)], ["year"])
         result = validate_domain_type(df, "year", "calendar_year")
         assert not result["success"]

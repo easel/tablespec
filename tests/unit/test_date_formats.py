@@ -4,6 +4,8 @@ from datetime import datetime
 
 import pytest
 
+pytestmark = [pytest.mark.fast]
+
 from tablespec.date_formats import (
     SUPPORTED_DATE_FORMATS,
     DateFormat,

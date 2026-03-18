@@ -17,7 +17,7 @@ from tablespec.models.umf import (
 )
 from tablespec.schemas.sql_generator import SQLPlanGenerator, generate_sql_plan
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 # ---------------------------------------------------------------------------

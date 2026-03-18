@@ -13,7 +13,7 @@ import yaml
 
 from tablespec.inference.domain_types import DomainTypeInference, DomainTypeRegistry
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 # --- DomainTypeRegistry Tests ---

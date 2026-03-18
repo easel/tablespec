@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestExpectationConsistency:

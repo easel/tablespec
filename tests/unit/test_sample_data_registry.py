@@ -5,6 +5,8 @@ import pytest
 from tablespec.sample_data.config import GenerationConfig
 from tablespec.sample_data.registry import KeyRegistry
 
+pytestmark = pytest.mark.fast
+
 
 @pytest.fixture
 def config():

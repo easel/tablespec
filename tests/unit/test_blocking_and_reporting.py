@@ -12,7 +12,7 @@ from tablespec.models.quality import (
 )
 from tablespec.validation.report import FailureDetail, ValidationReport
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 # ---------------------------------------------------------------------------

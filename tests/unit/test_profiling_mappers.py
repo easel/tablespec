@@ -283,6 +283,133 @@ class TestDeequToUmfMapper:
         assert result["statistics"]["mean"] == 123.4568
         assert result["statistics"]["stddev"] == 45.6789
 
+    def test_nullable_dict_preserved_when_completeness_low(self):
+        """Test that dict-style nullable is preserved (not replaced with bool) on low completeness."""
+        from tablespec.profiling import ColumnProfile, DataFrameProfile, DeequToUmfMapper
+
+        profile = DataFrameProfile(
+            num_records=1000,
+            columns={
+                "col_a": ColumnProfile(column_name="col_a", completeness=0.95),
+            },
+        )
+
+        mapper = DeequToUmfMapper()
+        umf = {
+            "table_name": "test",
+            "columns": [
+                {"name": "col_a", "data_type": "VARCHAR", "nullable": {"MD": False, "MP": True}},
+            ],
+        }
+
+        result = mapper.enrich_umf_with_profiling(umf, profile)
+
+        # Should be a dict with all values set to True, not a plain bool
+        nullable = result["columns"][0]["nullable"]
+        assert isinstance(nullable, dict)
+        assert nullable == {"MD": True, "MP": True}
+
+    def test_nullable_bool_when_no_existing_nullable(self):
+        """Test that nullable is set to bool True when no existing nullable dict."""
+        from tablespec.profiling import ColumnProfile, DataFrameProfile, DeequToUmfMapper
+
+        profile = DataFrameProfile(
+            num_records=1000,
+            columns={
+                "col_a": ColumnProfile(column_name="col_a", completeness=0.95),
+            },
+        )
+
+        mapper = DeequToUmfMapper()
+        umf = {
+            "table_name": "test",
+            "columns": [{"name": "col_a", "data_type": "VARCHAR"}],
+        }
+
+        result = mapper.enrich_umf_with_profiling(umf, profile)
+        assert result["columns"][0]["nullable"] is True
+
+    def test_num_records_propagated_to_column_profiling(self):
+        """Test that DataFrameProfile.num_records is propagated into each column's profiling."""
+        from tablespec.profiling import ColumnProfile, DataFrameProfile, DeequToUmfMapper
+
+        profile = DataFrameProfile(
+            num_records=5000,
+            columns={
+                "col_a": ColumnProfile(column_name="col_a", completeness=1.0),
+                "col_b": ColumnProfile(column_name="col_b", completeness=0.9),
+            },
+        )
+
+        mapper = DeequToUmfMapper()
+        umf = {
+            "table_name": "test",
+            "columns": [
+                {"name": "col_a", "data_type": "INTEGER"},
+                {"name": "col_b", "data_type": "VARCHAR"},
+            ],
+        }
+
+        result = mapper.enrich_umf_with_profiling(umf, profile)
+
+        assert result["columns"][0]["profiling"]["num_records"] == 5000
+        assert result["columns"][1]["profiling"]["num_records"] == 5000
+
+    def test_distinct_values_in_profiling_section(self):
+        """Test distinct_values are written to profiling section."""
+        from tablespec.profiling import ColumnProfile, DeequToUmfMapper
+
+        profile = ColumnProfile(
+            column_name="status",
+            completeness=1.0,
+            approximate_num_distinct=3,
+            distinct_values=["Active", "Inactive", "Pending"],
+        )
+
+        mapper = DeequToUmfMapper()
+        result = mapper._build_profiling_section(profile)
+
+        assert result["distinct_values"] == ["Active", "Inactive", "Pending"]
+
+    def test_distinct_values_omitted_when_none(self):
+        """Test distinct_values not present when not provided."""
+        from tablespec.profiling import ColumnProfile, DeequToUmfMapper
+
+        profile = ColumnProfile(column_name="col", completeness=1.0)
+
+        mapper = DeequToUmfMapper()
+        result = mapper._build_profiling_section(profile)
+
+        assert "distinct_values" not in result
+
+    def test_string_lengths_in_profiling_section(self):
+        """Test string length stats are written to profiling section."""
+        from tablespec.profiling import ColumnProfile, DeequToUmfMapper
+
+        profile = ColumnProfile(
+            column_name="name",
+            completeness=1.0,
+            string_length_min=2,
+            string_length_max=50,
+        )
+
+        mapper = DeequToUmfMapper()
+        result = mapper._build_profiling_section(profile)
+
+        assert result["string_lengths"]["min_length"] == 2
+        assert result["string_lengths"]["max_length"] == 50
+
+    def test_string_lengths_omitted_when_none(self):
+        """Test string_lengths not present when not provided."""
+        from tablespec.profiling import ColumnProfile, DeequToUmfMapper
+
+        profile = ColumnProfile(column_name="col", completeness=1.0)
+
+        mapper = DeequToUmfMapper()
+        result = mapper._build_profiling_section(profile)
+
+        assert "string_lengths" not in result
+
     def test_profiling_section_without_statistics(self):
         """Test profiling section when no statistics are available."""
         from tablespec.profiling import ColumnProfile, DeequToUmfMapper

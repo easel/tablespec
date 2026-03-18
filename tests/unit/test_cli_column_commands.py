@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from tablespec.cli import app
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 runner = CliRunner(env={"NO_COLOR": "1", "TERM": "dumb"})
 

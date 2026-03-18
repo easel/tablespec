@@ -9,7 +9,7 @@ from tablespec.naming import (
     to_spark_identifier,
 )
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestToSnakeCase:

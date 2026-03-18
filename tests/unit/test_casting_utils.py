@@ -15,7 +15,7 @@ from tablespec.casting_utils import (
     convert_umf_format_to_spark,
 )
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestConvertUmfFormatToSpark:

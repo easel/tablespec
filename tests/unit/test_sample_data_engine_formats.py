@@ -8,7 +8,7 @@ import pytest
 from tablespec.sample_data.config import GenerationConfig
 
 # Mark all tests in this module as not requiring Spark
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 @pytest.fixture

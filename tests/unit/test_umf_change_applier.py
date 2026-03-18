@@ -16,7 +16,7 @@ from tablespec.umf_diff import (
     UMFValidationChange,
 )
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 def _make_umf(columns=None, description=None, table_type=None, validation_rules=None):

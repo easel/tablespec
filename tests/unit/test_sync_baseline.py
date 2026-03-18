@@ -7,7 +7,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.fast
+
 from tablespec.sync_baseline import (
+
     METADATA_COLUMN_DEFINITIONS,
     BaselineSyncer,
     ConflictDetail,
@@ -16,6 +19,7 @@ from tablespec.sync_baseline import (
     ValidationRemoved,
     ValidationSeverityPreserved,
     ValidationUpgraded,
+    get_metadata_column_definitions,
 )
 
 
@@ -191,9 +195,35 @@ class TestMetadataColumnDefinitions:
             assert defn["source"] == "metadata"
             assert "description" in defn
             assert "nullable" in defn
-            # All metadata columns are non-nullable for all LOBs
-            for lob in ("MD", "ME", "MP"):
-                assert defn["nullable"][lob] is False
+            # Default constant uses MD/ME/MP for backward compat
+            for ctx in ("MD", "ME", "MP"):
+                assert defn["nullable"][ctx] is False
+
+    def test_get_metadata_column_definitions_with_context_keys(self):
+        """Derives context keys from column nullable dicts."""
+        columns = [
+            {"name": "col1", "nullable": {"retail": True, "wholesale": False}},
+            {"name": "col2", "nullable": {"retail": False, "wholesale": False}},
+        ]
+        defs = get_metadata_column_definitions(columns)
+        for defn in defs.values():
+            assert defn["nullable"] == {"retail": False, "wholesale": False}
+
+    def test_get_metadata_column_definitions_simple_boolean(self):
+        """Falls back to simple boolean when no per-context dicts exist."""
+        columns = [
+            {"name": "col1", "nullable": True},
+            {"name": "col2", "nullable": False},
+        ]
+        defs = get_metadata_column_definitions(columns)
+        for defn in defs.values():
+            assert defn["nullable"] is False
+
+    def test_get_metadata_column_definitions_no_columns(self):
+        """Falls back to simple boolean when no columns provided."""
+        defs = get_metadata_column_definitions()
+        for defn in defs.values():
+            assert defn["nullable"] is False
 
 
 # ============================================================================

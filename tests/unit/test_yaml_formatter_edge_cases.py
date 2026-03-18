@@ -22,7 +22,7 @@ from tablespec.formatting.yaml_formatter import (
     sort_recursive,
 )
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 # --- sort_recursive Tests ---

@@ -8,6 +8,8 @@ from tablespec.sample_data.config import GenerationConfig
 from tablespec.sample_data.generators import HealthcareDataGenerators
 from tablespec.sample_data.validation import ValidationRuleProcessor
 
+pytestmark = pytest.mark.fast
+
 
 @pytest.fixture
 def config():

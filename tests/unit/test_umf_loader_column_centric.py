@@ -4,7 +4,7 @@ import pytest
 
 from tablespec.umf_loader import UMFFormat, UMFLoader
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestColumnCentricFormatDetection:

@@ -4,6 +4,8 @@ import pytest
 
 from tablespec.sample_data.graph import RelationshipGraph, TableNode
 
+pytestmark = pytest.mark.fast
+
 
 class TestTableNode:
     """Test the TableNode dataclass."""

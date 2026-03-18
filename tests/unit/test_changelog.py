@@ -22,7 +22,7 @@ from tablespec.changelog_formatter import (
 )
 from tablespec.models.changelog import ChangeDetail, ChangeEntry, ChangeType
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 # ===========================================================================

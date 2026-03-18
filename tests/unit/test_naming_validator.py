@@ -11,7 +11,7 @@ from tablespec.naming_validator import (
     validate_naming_conventions,
 )
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 def _make_umf(table_name: str, column_names: list[str]) -> UMF:

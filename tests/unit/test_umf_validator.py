@@ -8,7 +8,7 @@ import yaml
 
 from tablespec.umf_validator import UMFValidationError, UMFValidator
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 @pytest.fixture()

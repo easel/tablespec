@@ -7,7 +7,7 @@ from hypothesis import strategies as st
 from tablespec.models.umf import UMF, UMFColumn
 from tablespec.umf_loader import UMFLoader
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 # -- Hypothesis strategies for minimal UMF objects --
 

@@ -9,7 +9,7 @@ from tablespec.formatting import (
 )
 
 # Mark all tests in this module to skip Spark environment setup
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestMultiLineStrings:

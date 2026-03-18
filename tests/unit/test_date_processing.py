@@ -4,7 +4,10 @@ from datetime import datetime
 
 import pytest
 
+pytestmark = pytest.mark.fast
+
 from tablespec.sample_data.date_processing import (
+
     convert_umf_format_to_strftime,
     extract_date_constraints,
 )

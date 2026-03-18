@@ -24,7 +24,7 @@ from tablespec.models.umf import (
     ValidationRules,
 )
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 # ---------------------------------------------------------------------------
@@ -218,9 +218,10 @@ class TestUMFToExcelConverter:
         wb = converter.convert(minimal_umf)
         ws = wb[ExcelConstants.SHEET_COLUMNS]
         # col_name (row 3) has nullable MD=True, MP=False, ME=True
+        # Context keys are sorted alphabetically: MD, ME, MP
         assert ws["H3"].value is True  # MD
-        assert ws["I3"].value is False  # MP
-        assert ws["J3"].value is True  # ME
+        assert ws["I3"].value is True  # ME
+        assert ws["J3"].value is False  # MP
 
     def test_sample_values_in_columns_sheet(self, minimal_umf):
         converter = UMFToExcelConverter()

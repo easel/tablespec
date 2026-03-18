@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.fast
+
 from tablespec.models.umf import (
+
     Cardinality,
     DerivationCandidate,
     Nullable,

@@ -6,7 +6,7 @@ import pytest
 
 from tablespec.models.changelog import ChangeDetail, ChangeEntry, ChangeType
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestChangeType:

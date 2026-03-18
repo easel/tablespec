@@ -1,5 +1,8 @@
 """Spike test: verify Great Expectations 1.6+ works with DuckDB.
 
+This spike intentionally uses pandas via DuckDB export -- not part of the
+Spark/Sail validation pipeline.
+
 This is a proof-of-concept to validate that GX can query data stored in
 DuckDB.  Two approaches are tested:
 

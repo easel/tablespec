@@ -11,7 +11,7 @@ from tablespec.models import (
 )
 from tablespec.relationship_validator import RelationshipValidator
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 def _make_umf(

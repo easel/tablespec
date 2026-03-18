@@ -12,6 +12,8 @@ import pytest
 from tablespec.inference.domain_types import DomainTypeRegistry
 from tablespec.models.umf import UMFColumn
 
+pytestmark = pytest.mark.fast
+
 
 class TestDomainTypeRegistryExpectedType:
     """Test DomainTypeRegistry.get_expected_base_type()."""

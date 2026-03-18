@@ -19,7 +19,7 @@ try:
 except ImportError:
     map_to_pyspark_type_obj = None
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestGXSparkTypeMapping:

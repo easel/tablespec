@@ -2,7 +2,7 @@ import pytest
 
 from tablespec.authoring.preview import generate_preview, PreviewResult
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestGeneratePreview:

@@ -5,7 +5,7 @@ import pytest
 from tests.builders import UMFBuilder
 from tablespec.authoring.mutations import add_column, modify_column, remove_column, rename_column
 
-pytestmark = [pytest.mark.no_spark]
+pytestmark = [pytest.mark.fast, pytest.mark.no_spark]
 
 
 class TestAddColumn:

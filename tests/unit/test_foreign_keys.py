@@ -15,7 +15,7 @@ from tablespec.sample_data import (
     RelationshipAnalyzer,
 )
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestRelationshipAnalyzer:

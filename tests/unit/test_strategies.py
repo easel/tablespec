@@ -9,6 +9,8 @@ from hypothesis import given, settings
 
 from tests.strategies import umf_column, umf_dict, umf_object
 
+pytestmark = pytest.mark.fast
+
 
 @pytest.mark.no_spark
 class TestStrategiesProduceValidUMF:

@@ -12,6 +12,8 @@ from typing import Any
 import pytest
 import yaml
 
+pytestmark = pytest.mark.fast
+
 # ── Fixtures ──────────────────────────────────────────────────────────────
 
 MINIMAL_UMF: dict[str, Any] = {

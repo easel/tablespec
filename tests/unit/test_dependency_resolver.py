@@ -10,7 +10,7 @@ from tablespec.dependency_resolver import (
     VersionConstraintError,
 )
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 # ---------------------------------------------------------------------------

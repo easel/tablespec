@@ -4,7 +4,7 @@ import pytest
 
 from tablespec.format_utils import convert_umf_format_to_strftime
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestConvertUmfFormatToStrftime:

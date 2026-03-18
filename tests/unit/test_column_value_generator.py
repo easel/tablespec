@@ -5,6 +5,8 @@ import pytest
 from tablespec.sample_data.column_value_generator import ColumnValueGenerator
 from tablespec.sample_data.config import GenerationConfig
 
+pytestmark = pytest.mark.fast
+
 
 class TestColumnValueGeneratorInstantiation:
     """Test that ColumnValueGenerator can be instantiated with mocked dependencies."""

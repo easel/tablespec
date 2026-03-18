@@ -9,6 +9,8 @@ import pytest
 from tablespec.sample_data.config import GenerationConfig
 from tablespec.sample_data.engine import SampleDataGenerator, _get_effective_position
 
+pytestmark = pytest.mark.fast
+
 
 class TestGetEffectivePosition:
     """Test the module-level _get_effective_position helper."""

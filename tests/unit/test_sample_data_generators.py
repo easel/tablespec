@@ -7,6 +7,8 @@ import pytest
 from tablespec.sample_data.config import GenerationConfig
 from tablespec.sample_data.generators import HealthcareDataGenerators
 
+pytestmark = pytest.mark.fast
+
 
 @pytest.fixture
 def config():

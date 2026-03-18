@@ -16,6 +16,8 @@ import yaml
 
 from tablespec.formatting import format_yaml_string
 
+pytestmark = pytest.mark.fast
+
 
 def approx_equal(a, b, rel_tol=1e-12, abs_tol=1e-10):
     """Compare two values with approximate equality for floats.

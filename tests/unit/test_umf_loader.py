@@ -9,7 +9,7 @@ from tablespec import save_umf_to_yaml
 from tablespec.umf_loader import UMFFormat, UMFLoader
 from tablespec.models import UMF, UMFColumn
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestFormatDetection:

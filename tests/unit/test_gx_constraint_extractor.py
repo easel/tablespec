@@ -6,7 +6,7 @@ import pytest
 
 from tablespec import GXConstraintExtractor
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestRegexGenerator:

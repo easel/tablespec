@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestSparkAvailableFlag:

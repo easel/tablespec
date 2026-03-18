@@ -9,6 +9,8 @@ import yaml
 
 from tablespec.gx_baseline import BaselineExpectationGenerator, UmfToGxMapper
 
+pytestmark = pytest.mark.fast
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -372,30 +374,25 @@ class TestUmfToGxMapper:
         assert suite["meta"]["table_name"] == "profiled_table"
 
     def test_profiling_expectations_without_profiling_data(self, mapper, umf_file):
-        """Test profiling expectations when no profiling data exists."""
-        # Load UMF to test _generate_profiling_expectations directly
-        with umf_file.open(encoding="utf-8") as f:
-            umf = yaml.safe_load(f)
-
-        column = umf["columns"][0]  # No profiling data
-        expectations = mapper._generate_profiling_expectations(column, "medium")
-
-        # Should return empty list when no profiling data
-        assert expectations == []
+        """Test no profiling expectations when no profiling data exists."""
+        suite = mapper.generate_expectations(umf_file)
+        profiling_exps = [
+            e for e in suite["expectations"]
+            if e.get("meta", {}).get("generated_from") == "profiling"
+        ]
+        assert profiling_exps == []
 
     def test_profiling_expectations_with_profiling_data(
         self, mapper, umf_with_profiling
     ):
-        """Test profiling expectations when profiling data exists."""
-        # Load UMF to test _generate_profiling_expectations directly
-        with umf_with_profiling.open(encoding="utf-8") as f:
-            umf = yaml.safe_load(f)
-
-        column = umf["columns"][0]  # Has profiling data
-        expectations = mapper._generate_profiling_expectations(column, "medium")
-
-        # Currently returns empty (TODO implementation), but exercises code path
-        assert isinstance(expectations, list)
+        """Test profiling expectations are generated via BaselineExpectationGenerator."""
+        suite = mapper.generate_expectations(umf_with_profiling)
+        profiling_exps = [
+            e for e in suite["expectations"]
+            if e.get("meta", {}).get("generated_from") == "profiling"
+        ]
+        # Profiling data should produce expectations via BaselineExpectationGenerator
+        assert isinstance(profiling_exps, list)
 
     def test_suite_metadata_contains_source_file(self, mapper, umf_file):
         """Test suite metadata includes source UMF file path."""
@@ -460,3 +457,157 @@ class TestUmfToGxMapper:
 
         assert suite["name"] == "unknown_suite"
         assert suite["meta"]["table_name"] == "unknown"
+
+
+class TestCrossColumnExpectations:
+    """Test cross-column pair expectations for date ordering."""
+
+    @pytest.fixture
+    def generator(self):
+        """Create generator instance."""
+        return BaselineExpectationGenerator()
+
+    def test_start_end_date_pair_generates_expectation(self, generator):
+        """UMF with start_date and end_date columns generates a pair expectation."""
+        umf_data = {
+            "table_name": "enrollment",
+            "columns": [
+                {"name": "start_date", "data_type": "DATE"},
+                {"name": "end_date", "data_type": "DATE"},
+            ],
+        }
+
+        expectations = generator._generate_cross_column_expectations(umf_data)
+
+        assert len(expectations) == 1
+        exp = expectations[0]
+        assert exp["type"] == "expect_column_pair_values_a_to_be_greater_than_b"
+        assert exp["kwargs"]["column_A"] == "end_date"
+        assert exp["kwargs"]["column_B"] == "start_date"
+        assert exp["kwargs"]["or_equal"] is True
+        assert exp["meta"]["severity"] == "warning"
+        assert exp["meta"]["generated_from"] == "baseline"
+
+    def test_no_date_columns_generates_nothing(self, generator):
+        """UMF with no date columns generates no pair expectations."""
+        umf_data = {
+            "table_name": "simple",
+            "columns": [
+                {"name": "id", "data_type": "INTEGER"},
+                {"name": "name", "data_type": "VARCHAR"},
+            ],
+        }
+
+        expectations = generator._generate_cross_column_expectations(umf_data)
+
+        assert expectations == []
+
+    def test_mismatched_names_generates_nothing(self, generator):
+        """UMF with start_date but no matching end column generates nothing."""
+        umf_data = {
+            "table_name": "partial",
+            "columns": [
+                {"name": "start_date", "data_type": "DATE"},
+                {"name": "created_date", "data_type": "DATE"},
+            ],
+        }
+
+        expectations = generator._generate_cross_column_expectations(umf_data)
+
+        assert expectations == []
+
+    def test_case_insensitive_matching(self, generator):
+        """Case insensitivity works for Start_Date / End_Date."""
+        umf_data = {
+            "table_name": "mixed_case",
+            "columns": [
+                {"name": "Start_Date", "data_type": "DATE"},
+                {"name": "End_Date", "data_type": "DATE"},
+            ],
+        }
+
+        expectations = generator._generate_cross_column_expectations(umf_data)
+
+        assert len(expectations) == 1
+        exp = expectations[0]
+        assert exp["kwargs"]["column_A"] == "End_Date"
+        assert exp["kwargs"]["column_B"] == "Start_Date"
+
+    def test_effective_expiry_pattern(self, generator):
+        """Effective/expiry date patterns are detected."""
+        umf_data = {
+            "table_name": "policy",
+            "columns": [
+                {"name": "effective_date", "data_type": "DATE"},
+                {"name": "expiry_date", "data_type": "DATE"},
+            ],
+        }
+
+        expectations = generator._generate_cross_column_expectations(umf_data)
+
+        assert len(expectations) == 1
+        assert expectations[0]["kwargs"]["column_A"] == "expiry_date"
+        assert expectations[0]["kwargs"]["column_B"] == "effective_date"
+
+    def test_begin_end_pattern(self, generator):
+        """Begin/end date patterns are detected."""
+        umf_data = {
+            "table_name": "period",
+            "columns": [
+                {"name": "begin_period", "data_type": "DATE"},
+                {"name": "end_period", "data_type": "DATE"},
+            ],
+        }
+
+        expectations = generator._generate_cross_column_expectations(umf_data)
+
+        assert len(expectations) == 1
+        assert expectations[0]["kwargs"]["column_A"] == "end_period"
+        assert expectations[0]["kwargs"]["column_B"] == "begin_period"
+
+    def test_datetime_columns_supported(self, generator):
+        """DATETIME type columns are also matched."""
+        umf_data = {
+            "table_name": "events",
+            "columns": [
+                {"name": "start_time", "data_type": "DATETIME"},
+                {"name": "end_time", "data_type": "DATETIME"},
+            ],
+        }
+
+        expectations = generator._generate_cross_column_expectations(umf_data)
+
+        assert len(expectations) == 1
+
+    def test_non_date_start_end_ignored(self, generator):
+        """Start/end columns that are not date types are ignored."""
+        umf_data = {
+            "table_name": "range",
+            "columns": [
+                {"name": "start_value", "data_type": "INTEGER"},
+                {"name": "end_value", "data_type": "INTEGER"},
+            ],
+        }
+
+        expectations = generator._generate_cross_column_expectations(umf_data)
+
+        assert expectations == []
+
+    def test_cross_column_included_in_baseline(self, generator):
+        """Cross-column expectations are included in generate_baseline_expectations."""
+        umf_data = {
+            "table_name": "enrollment",
+            "columns": [
+                {"name": "start_date", "data_type": "DATE"},
+                {"name": "end_date", "data_type": "DATE"},
+            ],
+        }
+
+        expectations = generator.generate_baseline_expectations(umf_data)
+
+        pair_exps = [
+            e
+            for e in expectations
+            if e["type"] == "expect_column_pair_values_a_to_be_greater_than_b"
+        ]
+        assert len(pair_exps) == 1

@@ -4,6 +4,8 @@ import pytest
 
 from tablespec.sample_data.constraint_handlers import ConstraintHandlers
 
+pytestmark = pytest.mark.fast
+
 
 class TestShouldApplyEqualityConstraint:
     """Test should_apply_equality_constraint logic."""

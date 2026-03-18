@@ -7,7 +7,7 @@ import pytest
 from tablespec.models.umf import Nullable, UMF, UMFColumn
 from tests.builders import UMFBuilder
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestBuilderProducesValidUMF:

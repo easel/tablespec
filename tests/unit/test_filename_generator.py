@@ -6,6 +6,8 @@ import pytest
 
 from tablespec.sample_data.filename_generator import FilenameGenerator
 
+pytestmark = pytest.mark.fast
+
 
 class TestGetCaptureGroupPatternForColumn:
     """Test extraction of capture group patterns for specific columns."""

@@ -7,7 +7,7 @@ import pytest
 from tablespec.authoring.apply_response import ApplyResult, apply_validation_response
 from tablespec.models.umf import UMF
 
-pytestmark = [pytest.mark.no_spark]
+pytestmark = [pytest.mark.fast, pytest.mark.no_spark]
 
 
 def _make_umf(

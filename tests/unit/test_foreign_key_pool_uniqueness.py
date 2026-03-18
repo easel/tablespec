@@ -8,7 +8,7 @@ from tablespec.sample_data.foreign_keys import (
     ForeignKeyPoolManager,
 )
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 def test_pool_generates_unique_values():

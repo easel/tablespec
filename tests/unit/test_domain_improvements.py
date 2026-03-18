@@ -14,7 +14,7 @@ from tablespec.inference.domain_types import (
     expand_column_name,
 )
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestAbbreviationExpansion:

@@ -11,7 +11,7 @@ from tablespec.survivorship_display import (
     load_survivorship,
 )
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 # ---------------------------------------------------------------------------

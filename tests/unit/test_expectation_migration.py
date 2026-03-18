@@ -4,7 +4,7 @@ import pytest
 
 from tablespec.expectation_migration import migrate_to_expectation_suite
 
-pytestmark = pytest.mark.no_spark
+pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
 
 class TestMigrateValidationRules:
