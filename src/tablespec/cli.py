@@ -799,6 +799,45 @@ def domains_infer(
 
 
 @app.command()
+def domains_set(
+    table_path: str = typer.Argument(..., help="Path to UMF table (file or directory)"),
+    column: str = typer.Option(..., "--column", "-c", help="Column name"),
+    domain_type: str = typer.Option(..., "--type", "-t", help="Domain type to assign"),
+) -> None:
+    """Set the domain type for a column.
+
+    Validates that the domain type exists in the registry before setting.
+
+    Examples:
+      tablespec domains-set tables/claims/ --column gender_cd --type gender_code
+      tablespec domains-set table.yaml --column state_cd --type us_state_code
+
+    """
+    from tablespec.authoring.mutations import modify_column
+
+    try:
+        # Validate domain type exists
+        registry = DomainTypeRegistry()
+        if not registry.get_domain_type(domain_type):
+            available = registry.list_domain_types()
+            console.print(f"[red]Error:[/red] Unknown domain type '{domain_type}'")
+            console.print(f"[dim]Available: {', '.join(sorted(available)[:10])}... ({len(available)} total)[/dim]")
+            raise typer.Exit(1)
+
+        loader = UMFLoader()
+        umf = loader.load(table_path)
+        updated = modify_column(umf, column, domain_type=domain_type)
+        dest = Path(table_path)
+        fmt = UMFFormat.JSON if dest.suffix == ".json" else UMFFormat.SPLIT
+        loader.save(updated, dest, format=fmt)
+        console.print(f"[green]Set[/green] domain type '{domain_type}' on column '{column}'")
+
+    except (ValueError, FileNotFoundError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
 def column_add(
     table_path: str = typer.Argument(..., help="Path to UMF table (file or directory)"),
     name: str = typer.Option(..., "--name", "-n", help="Column name"),
