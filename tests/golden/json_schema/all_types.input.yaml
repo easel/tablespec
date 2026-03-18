@@ -1,0 +1,45 @@
+table_name: all_types_demo
+canonical_name: AllTypesDemo
+description: Table demonstrating all UMF data types
+metadata:
+  source_file_modified: "2025-01-15T10:30:00"
+columns:
+  - name: col_varchar
+    data_type: VARCHAR
+    max_length: 50
+    nullable: true
+    description: A varchar column
+  - name: col_integer
+    data_type: INTEGER
+    nullable: true
+    description: An integer column
+  - name: col_decimal
+    data_type: DECIMAL
+    precision: 10
+    scale: 2
+    nullable: true
+    description: A decimal column
+  - name: col_float
+    data_type: FLOAT
+    nullable: true
+    description: A float column
+  - name: col_boolean
+    data_type: BOOLEAN
+    nullable: true
+    description: A boolean column
+  - name: col_date
+    data_type: DATE
+    nullable: true
+    description: A date column
+  - name: col_datetime
+    data_type: DATETIME
+    nullable: true
+    description: A datetime column
+  - name: col_text
+    data_type: TEXT
+    nullable: true
+    description: A text column
+  - name: col_char
+    data_type: CHAR
+    nullable: true
+    description: A char column

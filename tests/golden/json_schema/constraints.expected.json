@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "products Schema",
+  "type": "object",
+  "description": "Product catalog with constraints",
+  "properties": {
+    "sku": {
+      "type": "string",
+      "description": "Product SKU",
+      "maxLength": 20,
+      "examples": [
+        "SKU-001",
+        "SKU-002",
+        "SKU-003"
+      ]
+    },
+    "name": {
+      "type": "string",
+      "description": "Product name",
+      "maxLength": 200
+    },
+    "price": {
+      "type": "number",
+      "description": "Unit price"
+    },
+    "weight_kg": {
+      "type": "number",
+      "description": "Weight in kilograms"
+    },
+    "is_active": {
+      "type": "boolean",
+      "description": "Whether product is active"
+    }
+  },
+  "required": [
+    "sku",
+    "name",
+    "price",
+    "is_active"
+  ]
+}

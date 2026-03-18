@@ -1,0 +1,30 @@
+table_name: claims
+description: Claims with mixed nullable settings
+metadata:
+  source_file_modified: "2025-01-15T10:30:00"
+columns:
+  - name: claim_id
+    data_type: VARCHAR
+    max_length: 20
+    nullable: false
+    description: Claim identifier
+  - name: member_id
+    data_type: VARCHAR
+    max_length: 20
+    nullable: false
+    description: Member identifier
+  - name: diagnosis_code
+    data_type: VARCHAR
+    max_length: 10
+    nullable: true
+    description: ICD-10 code
+  - name: amount
+    data_type: DECIMAL
+    precision: 12
+    scale: 2
+    nullable: false
+    description: Claim amount
+  - name: notes
+    data_type: VARCHAR
+    nullable: true
+    description: Optional notes

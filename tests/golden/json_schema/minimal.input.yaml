@@ -1,0 +1,19 @@
+table_name: users
+description: User accounts table
+metadata:
+  source_file_modified: "2025-01-15T10:30:00"
+columns:
+  - name: id
+    data_type: INTEGER
+    nullable: false
+    description: Primary key
+  - name: name
+    data_type: VARCHAR
+    max_length: 100
+    nullable: false
+    description: User name
+  - name: email
+    data_type: VARCHAR
+    max_length: 255
+    nullable: true
+    description: Email address

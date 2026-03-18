@@ -1,0 +1,34 @@
+table_name: products
+description: Product catalog with constraints
+metadata:
+  source_file_modified: "2025-01-15T10:30:00"
+columns:
+  - name: sku
+    data_type: VARCHAR
+    max_length: 20
+    nullable: false
+    description: Product SKU
+    sample_values:
+      - SKU-001
+      - SKU-002
+      - SKU-003
+      - SKU-004
+  - name: name
+    data_type: VARCHAR
+    max_length: 200
+    nullable: false
+    description: Product name
+  - name: price
+    data_type: DECIMAL
+    precision: 8
+    scale: 2
+    nullable: false
+    description: Unit price
+  - name: weight_kg
+    data_type: FLOAT
+    nullable: true
+    description: Weight in kilograms
+  - name: is_active
+    data_type: BOOLEAN
+    nullable: false
+    description: Whether product is active

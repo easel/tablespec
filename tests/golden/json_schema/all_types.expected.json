@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AllTypesDemo Schema",
+  "type": "object",
+  "description": "Table demonstrating all UMF data types",
+  "properties": {
+    "col_varchar": {
+      "type": "string",
+      "description": "A varchar column",
+      "maxLength": 50
+    },
+    "col_integer": {
+      "type": "integer",
+      "description": "An integer column"
+    },
+    "col_decimal": {
+      "type": "number",
+      "description": "A decimal column"
+    },
+    "col_float": {
+      "type": "number",
+      "description": "A float column"
+    },
+    "col_boolean": {
+      "type": "boolean",
+      "description": "A boolean column"
+    },
+    "col_date": {
+      "type": "string",
+      "description": "A date column"
+    },
+    "col_datetime": {
+      "type": "string",
+      "description": "A datetime column"
+    },
+    "col_text": {
+      "type": "string",
+      "description": "A text column"
+    },
+    "col_char": {
+      "type": "string",
+      "description": "A char column"
+    }
+  },
+  "required": []
+}
