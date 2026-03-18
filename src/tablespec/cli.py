@@ -799,6 +799,183 @@ def domains_infer(
 
 
 @app.command()
+def column_add(
+    table_path: str = typer.Argument(..., help="Path to UMF table (file or directory)"),
+    name: str = typer.Option(..., "--name", "-n", help="Column name"),
+    data_type: str = typer.Option(..., "--type", "-t", help="Data type (e.g., VARCHAR, INTEGER, DATE)"),
+    description: str = typer.Option(None, "--description", "-d", help="Column description"),
+    nullable: bool = typer.Option(True, "--nullable/--not-nullable", help="Whether column is nullable"),
+    length: int = typer.Option(None, "--length", help="Max length for VARCHAR/CHAR"),
+) -> None:
+    """Add a column to a UMF table.
+
+    Examples:
+      tablespec column-add tables/claims/ --name status_cd --type VARCHAR --length 10
+      tablespec column-add table.yaml --name amount --type DECIMAL --not-nullable
+
+    """
+    from tablespec.authoring.mutations import add_column
+
+    try:
+        loader = UMFLoader()
+        umf = loader.load(table_path)
+
+        kwargs: dict = {}
+        if description is not None:
+            kwargs["description"] = description
+        if not nullable:
+            kwargs["nullable"] = False
+        if length is not None:
+            kwargs["max_length"] = length
+
+        updated = add_column(umf, name, data_type, **kwargs)
+        dest = Path(table_path)
+        fmt = UMFFormat.JSON if dest.suffix == ".json" else UMFFormat.SPLIT
+        loader.save(updated, dest, format=fmt)
+        console.print(f"[green]Added[/green] column '{name}' ({data_type}) to {umf.table_name}")
+
+    except (ValueError, FileNotFoundError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def column_remove(
+    table_path: str = typer.Argument(..., help="Path to UMF table (file or directory)"),
+    name: str = typer.Option(..., "--name", "-n", help="Column name to remove"),
+) -> None:
+    """Remove a column from a UMF table.
+
+    Examples:
+      tablespec column-remove tables/claims/ --name legacy_field
+
+    """
+    from tablespec.authoring.mutations import remove_column
+
+    try:
+        loader = UMFLoader()
+        umf = loader.load(table_path)
+        updated = remove_column(umf, name)
+        dest = Path(table_path)
+        fmt = UMFFormat.JSON if dest.suffix == ".json" else UMFFormat.SPLIT
+        loader.save(updated, dest, format=fmt)
+        console.print(f"[green]Removed[/green] column '{name}' from {umf.table_name}")
+
+    except (ValueError, FileNotFoundError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def column_modify(
+    table_path: str = typer.Argument(..., help="Path to UMF table (file or directory)"),
+    name: str = typer.Option(..., "--name", "-n", help="Column name to modify"),
+    data_type: str = typer.Option(None, "--type", "-t", help="New data type"),
+    description: str = typer.Option(None, "--description", "-d", help="New description"),
+    length: int = typer.Option(None, "--length", help="New max length"),
+) -> None:
+    """Modify a column's attributes in a UMF table.
+
+    Examples:
+      tablespec column-modify tables/claims/ --name status_cd --type VARCHAR --length 20
+      tablespec column-modify table.yaml --name amount --description "Total claim amount"
+
+    """
+    from tablespec.authoring.mutations import modify_column
+
+    try:
+        loader = UMFLoader()
+        umf = loader.load(table_path)
+
+        changes: dict = {}
+        if data_type is not None:
+            changes["data_type"] = data_type
+        if description is not None:
+            changes["description"] = description
+        if length is not None:
+            changes["max_length"] = length
+
+        if not changes:
+            console.print("[yellow]No changes specified.[/yellow]")
+            raise typer.Exit(0)
+
+        updated = modify_column(umf, name, **changes)
+        dest = Path(table_path)
+        fmt = UMFFormat.JSON if dest.suffix == ".json" else UMFFormat.SPLIT
+        loader.save(updated, dest, format=fmt)
+        console.print(f"[green]Modified[/green] column '{name}' in {umf.table_name}: {', '.join(changes)}")
+
+    except (ValueError, FileNotFoundError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def column_rename(
+    table_path: str = typer.Argument(..., help="Path to UMF table (file or directory)"),
+    old_name: str = typer.Option(..., "--from", help="Current column name"),
+    new_name: str = typer.Option(..., "--to", help="New column name"),
+    keep_alias: bool = typer.Option(False, "--keep-alias", help="Add old name to aliases list"),
+) -> None:
+    """Rename a column in a UMF table.
+
+    Examples:
+      tablespec column-rename tables/claims/ --from mbr_id --to member_id --keep-alias
+
+    """
+    from tablespec.authoring.mutations import rename_column
+
+    try:
+        loader = UMFLoader()
+        umf = loader.load(table_path)
+        updated = rename_column(umf, old_name, new_name, keep_alias=keep_alias)
+        dest = Path(table_path)
+        fmt = UMFFormat.JSON if dest.suffix == ".json" else UMFFormat.SPLIT
+        loader.save(updated, dest, format=fmt)
+        msg = f"[green]Renamed[/green] '{old_name}' → '{new_name}' in {umf.table_name}"
+        if keep_alias:
+            msg += f" (alias '{old_name}' preserved)"
+        console.print(msg)
+
+    except (ValueError, FileNotFoundError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def explore(
+    path: Path = typer.Argument(
+        ...,
+        help="Path to UMF file or directory of UMF YAML files",
+        exists=True,
+    ),
+) -> None:
+    """Launch interactive TUI for UMF exploration and editing.
+
+    Browse tables and columns in a tree view, search across all loaded UMFs,
+    and edit column descriptions and data types inline.
+
+    Requires the tui extra: pip install tablespec[tui]
+
+    Examples:
+      tablespec explore tables/
+      tablespec explore my_table.umf.yaml
+
+    """
+    try:
+        from tablespec.tui import UMFExplorer
+    except ImportError:
+        console.print(
+            "[red]Error:[/red] TUI requires textual. "
+            "Install with: [cyan]pip install tablespec[tui][/cyan]"
+        )
+        raise typer.Exit(1)
+
+    explorer = UMFExplorer(path)
+    explorer.run()
+
+
+@app.command()
 def preview(
     table_path: str = typer.Argument(..., help="Path to UMF table (directory or file)"),
     against: str = typer.Option(None, "--against", help="CSV file to validate against"),
