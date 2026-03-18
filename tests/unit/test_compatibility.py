@@ -18,8 +18,9 @@ from tablespec.type_lattice import (
     is_precision_compatible,
     is_safe_widening,
 )
+from tests.strategies import umf_object as shared_umf_object
 
-pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
+pytestmark = pytest.mark.no_spark
 
 
 # ---------------------------------------------------------------------------
@@ -406,3 +407,27 @@ class TestHypothesisProperties:
         report = check_compatibility(umf, new)
         assert not report.is_backward_compatible
         assert any(i.change == "removed" for i in report.issues)
+
+
+class TestSharedStrategyProperties:
+    """Property-based tests using the shared umf_object strategy from tests.strategies."""
+
+    @given(umf=shared_umf_object())
+    @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow])
+    def test_reflexivity_with_shared_strategy(self, umf):
+        """check_compatibility(umf, umf) reports no breaking issues for any UMF."""
+        report = check_compatibility(umf, umf)
+        assert report.is_backward_compatible
+        assert report.is_forward_compatible
+        assert len(report.issues) == 0
+class TestSharedStrategyProperties:
+    """Property-based tests using the shared umf_object strategy from tests.strategies."""
+
+    @given(umf=shared_umf_object())
+    @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow])
+    def test_reflexivity_with_shared_strategy(self, umf):
+        """check_compatibility(umf, umf) reports no breaking issues for any UMF."""
+        report = check_compatibility(umf, umf)
+        assert report.is_backward_compatible
+        assert report.is_forward_compatible
+        assert len(report.issues) == 0

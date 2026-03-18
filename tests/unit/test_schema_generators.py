@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 
 import pytest
+from hypothesis import given, settings
 
 from tablespec.schemas.generators import (
     generate_json_schema,
     generate_pyspark_schema,
     generate_sql_ddl,
 )
+from tests.strategies import umf_dict
 
 pytestmark = pytest.mark.no_spark
 
@@ -464,3 +466,71 @@ class TestGenerateJSONSchema:
 
         schema = generate_json_schema(umf)
         assert schema["required"] == []
+
+
+class TestPropertyBasedGenerators:
+    """Property-based tests for schema generators using Hypothesis."""
+
+    @given(data=umf_dict())
+    @settings(max_examples=50, deadline=None)
+    def test_sql_ddl_never_crashes_and_returns_nonempty(self, data):
+        """Any valid UMF dict produces non-empty SQL DDL without crashing."""
+        result = generate_sql_ddl(data)
+        assert isinstance(result, str)
+        assert len(result) > 0
+        assert "CREATE TABLE" in result
+
+    @given(data=umf_dict())
+    @settings(max_examples=50, deadline=None)
+    def test_pyspark_schema_never_crashes_and_returns_nonempty(self, data):
+        """Any valid UMF dict produces non-empty PySpark schema without crashing."""
+        result = generate_pyspark_schema(data)
+        assert isinstance(result, str)
+        assert len(result) > 0
+        assert "StructType" in result
+
+    @given(data=umf_dict())
+    @settings(max_examples=50, deadline=None)
+    def test_json_schema_never_crashes_and_returns_valid_json(self, data):
+        """Any valid UMF dict produces valid JSON Schema that serializes correctly."""
+        result = generate_json_schema(data)
+        assert isinstance(result, dict)
+        assert "properties" in result
+        assert len(result["properties"]) > 0
+        # Must be JSON-serializable
+        json_str = json.dumps(result)
+        parsed = json.loads(json_str)
+        assert parsed == result
+class TestPropertyBasedGenerators:
+    """Property-based tests for schema generators using Hypothesis."""
+
+    @given(data=umf_dict())
+    @settings(max_examples=50, deadline=None)
+    def test_sql_ddl_never_crashes_and_returns_nonempty(self, data):
+        """Any valid UMF dict produces non-empty SQL DDL without crashing."""
+        result = generate_sql_ddl(data)
+        assert isinstance(result, str)
+        assert len(result) > 0
+        assert "CREATE TABLE" in result
+
+    @given(data=umf_dict())
+    @settings(max_examples=50, deadline=None)
+    def test_pyspark_schema_never_crashes_and_returns_nonempty(self, data):
+        """Any valid UMF dict produces non-empty PySpark schema without crashing."""
+        result = generate_pyspark_schema(data)
+        assert isinstance(result, str)
+        assert len(result) > 0
+        assert "StructType" in result
+
+    @given(data=umf_dict())
+    @settings(max_examples=50, deadline=None)
+    def test_json_schema_never_crashes_and_returns_valid_json(self, data):
+        """Any valid UMF dict produces valid JSON Schema that serializes correctly."""
+        result = generate_json_schema(data)
+        assert isinstance(result, dict)
+        assert "properties" in result
+        assert len(result["properties"]) > 0
+        # Must be JSON-serializable
+        json_str = json.dumps(result)
+        parsed = json.loads(json_str)
+        assert parsed == result

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import ValidationError
 import pytest
+from hypothesis import given, settings
 
 from tablespec.models.umf import (
     UMF,
@@ -14,8 +15,9 @@ from tablespec.models.umf import (
     UMFColumn,
     UMFColumnDerivation,
 )
+from tests.strategies import umf_object
 
-pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
+pytestmark = pytest.mark.no_spark
 
 
 class TestNullable:
@@ -666,5 +668,53 @@ class TestUMF:
         assert "description" not in data
         assert "source_file" not in data
         assert "validation_rules" not in data
+
+
+class TestPropertyBasedUMF:
+    """Property-based tests for UMF model roundtrip."""
+
+    @given(umf=umf_object())
+    @settings(max_examples=50, deadline=None)
+    def test_roundtrip_model_dump_and_reconstruct(self, umf):
+        """Any UMF from umf_object() round-trips through model_dump/reconstruct."""
+        data = umf.model_dump()
+        reconstructed = UMF(**data)
+
+        assert reconstructed.version == umf.version
+        assert reconstructed.table_name == umf.table_name
+        assert len(reconstructed.columns) == len(umf.columns)
+
+        for orig_col, new_col in zip(umf.columns, reconstructed.columns):
+            assert new_col.name == orig_col.name
+            assert new_col.data_type == orig_col.data_type
+            assert new_col.length == orig_col.length
+            assert new_col.precision == orig_col.precision
+            assert new_col.scale == orig_col.scale
+            assert new_col.nullable == orig_col.nullable
+            assert new_col.description == orig_col.description
+
+
+class TestPropertyBasedUMF:
+    """Property-based tests for UMF model roundtrip."""
+
+    @given(umf=umf_object())
+    @settings(max_examples=50, deadline=None)
+    def test_roundtrip_model_dump_and_reconstruct(self, umf):
+        """Any UMF from umf_object() round-trips through model_dump/reconstruct."""
+        data = umf.model_dump()
+        reconstructed = UMF(**data)
+
+        assert reconstructed.version == umf.version
+        assert reconstructed.table_name == umf.table_name
+        assert len(reconstructed.columns) == len(umf.columns)
+
+        for orig_col, new_col in zip(umf.columns, reconstructed.columns):
+            assert new_col.name == orig_col.name
+            assert new_col.data_type == orig_col.data_type
+            assert new_col.length == orig_col.length
+            assert new_col.precision == orig_col.precision
+            assert new_col.scale == orig_col.scale
+            assert new_col.nullable == orig_col.nullable
+            assert new_col.description == orig_col.description
 
 
