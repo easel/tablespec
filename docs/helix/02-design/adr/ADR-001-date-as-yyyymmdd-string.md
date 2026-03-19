@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The tablespec library serves the healthcare data domain, where data originates from CMS and state Medicaid/Medicare systems. In these systems, date values are commonly stored and transmitted as 8-digit strings in YYYYMMDD format (e.g., `"20260315"`) rather than as native date types. This is a widespread convention in healthcare EDI transactions, flat-file extracts, and legacy systems.
+The tablespec library commonly processes data from legacy systems, EDI transactions, and flat-file extracts where date values are stored as YYYYMMDD strings (e.g., `"20260315"`) rather than as native date types. This pattern is widespread in healthcare (CMS, Medicaid/Medicare), financial services (SWIFT messages, FIX protocol), and government data systems.
 
 When mapping UMF column types to PySpark and Great Expectations type systems, a choice must be made: should `DATE` columns be mapped to native date types (e.g., PySpark `DateType`) or to string types that preserve the original YYYYMMDD representation?
 
@@ -24,7 +24,7 @@ Specifically:
 
 ### Positive
 
-- Faithfully represents how date data actually exists in healthcare source systems, avoiding lossy or error-prone date parsing at the schema level.
+- Faithfully represents how date data actually exists in legacy source systems (healthcare, financial services, government), avoiding lossy or error-prone date parsing at the schema level.
 - Validates the specific YYYYMMDD format via Great Expectations, catching malformed date strings (e.g., `"2026-03-15"`, `"03152026"`) that would silently succeed with a permissive DateType.
 - Avoids PySpark date parsing issues with non-standard formats, timezone ambiguity, and null handling differences between `DateType` and `StringType`.
 - Consistent with upstream data contracts where dates are defined as fixed-length character fields.

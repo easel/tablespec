@@ -611,3 +611,262 @@ class TestCrossColumnExpectations:
             if e["type"] == "expect_column_pair_values_a_to_be_greater_than_b"
         ]
         assert len(pair_exps) == 1
+
+
+class TestProfilingExpectations:
+    """Test profiling-based expectation generation from BaselineExpectationGenerator."""
+
+    @pytest.fixture
+    def generator(self):
+        """Create generator instance."""
+        return BaselineExpectationGenerator()
+
+    @staticmethod
+    def _profiling_exps(expectations: list[dict]) -> list[dict]:
+        """Filter expectations to only profiling-generated ones."""
+        return [
+            e
+            for e in expectations
+            if e.get("meta", {}).get("generated_from") == "profiling"
+        ]
+
+    def test_uniqueness_high_cardinality(self, generator):
+        """Column with num_distinct >= 0.99 * num_records generates uniqueness expectation."""
+        column = {
+            "name": "id",
+            "data_type": "INTEGER",
+            "profiling": {
+                "approximate_num_distinct": 1000,
+                "num_records": 1000,
+            },
+        }
+
+        exps = self._profiling_exps(
+            generator.generate_baseline_column_expectations(column)
+        )
+
+        unique_exps = [
+            e for e in exps if e["type"] == "expect_column_values_to_be_unique"
+        ]
+        assert len(unique_exps) == 1
+        assert unique_exps[0]["kwargs"]["column"] == "id"
+
+    def test_no_uniqueness_low_cardinality(self, generator):
+        """Column with num_distinct far below num_records generates no uniqueness expectation."""
+        column = {
+            "name": "status",
+            "data_type": "VARCHAR",
+            "profiling": {
+                "approximate_num_distinct": 50,
+                "num_records": 1000,
+            },
+        }
+
+        exps = self._profiling_exps(
+            generator.generate_baseline_column_expectations(column)
+        )
+
+        unique_exps = [
+            e for e in exps if e["type"] == "expect_column_values_to_be_unique"
+        ]
+        assert unique_exps == []
+
+    def test_range_from_statistics(self, generator):
+        """Column with statistics min/max generates between expectation."""
+        column = {
+            "name": "score",
+            "data_type": "INTEGER",
+            "profiling": {
+                "statistics": {"min": 0, "max": 100},
+            },
+        }
+
+        exps = self._profiling_exps(
+            generator.generate_baseline_column_expectations(column)
+        )
+
+        range_exps = [
+            e for e in exps if e["type"] == "expect_column_values_to_be_between"
+        ]
+        assert len(range_exps) == 1
+        assert range_exps[0]["kwargs"]["min_value"] == 0
+        assert range_exps[0]["kwargs"]["max_value"] == 100
+        assert range_exps[0]["kwargs"]["column"] == "score"
+
+    def test_high_completeness_strict_not_null(self, generator):
+        """Column with completeness > 0.99 and no baseline nullable generates strict not-null."""
+        column = {
+            "name": "email",
+            "data_type": "VARCHAR",
+            "profiling": {"completeness": 1.0},
+        }
+
+        exps = self._profiling_exps(
+            generator.generate_baseline_column_expectations(column)
+        )
+
+        not_null_exps = [
+            e for e in exps if e["type"] == "expect_column_values_to_not_be_null"
+        ]
+        assert len(not_null_exps) == 1
+        assert "mostly" not in not_null_exps[0]["kwargs"]
+
+    def test_moderate_completeness_mostly_not_null(self, generator):
+        """Column with completeness 0.95-0.99 generates not-null with mostly."""
+        column = {
+            "name": "phone",
+            "data_type": "VARCHAR",
+            "profiling": {"completeness": 0.97},
+        }
+
+        exps = self._profiling_exps(
+            generator.generate_baseline_column_expectations(column)
+        )
+
+        not_null_exps = [
+            e for e in exps if e["type"] == "expect_column_values_to_not_be_null"
+        ]
+        assert len(not_null_exps) == 1
+        assert not_null_exps[0]["kwargs"]["mostly"] == 0.97
+
+    def test_completeness_skipped_when_baseline_has_not_null(self, generator):
+        """Column with completeness=1.0 but nullable={ctx: False} generates no profiling not-null."""
+        column = {
+            "name": "required_field",
+            "data_type": "VARCHAR",
+            "nullable": {"medicare": False},
+            "profiling": {"completeness": 1.0},
+        }
+
+        exps = self._profiling_exps(
+            generator.generate_baseline_column_expectations(column)
+        )
+
+        not_null_exps = [
+            e for e in exps if e["type"] == "expect_column_values_to_not_be_null"
+        ]
+        assert not_null_exps == []
+
+    def test_value_set_from_distinct_values(self, generator):
+        """Column with distinct_values generates value-set expectation."""
+        column = {
+            "name": "status",
+            "data_type": "VARCHAR",
+            "profiling": {
+                "distinct_values": ["A", "B", "C"],
+            },
+        }
+
+        exps = self._profiling_exps(
+            generator.generate_baseline_column_expectations(column)
+        )
+
+        set_exps = [
+            e for e in exps if e["type"] == "expect_column_values_to_be_in_set"
+        ]
+        assert len(set_exps) == 1
+        assert set_exps[0]["kwargs"]["value_set"] == ["A", "B", "C"]
+        assert set_exps[0]["kwargs"]["column"] == "status"
+
+    def test_string_length_from_profiling(self, generator):
+        """Column with string_lengths generates length-between expectation."""
+        column = {
+            "name": "code",
+            "data_type": "VARCHAR",
+            "profiling": {
+                "string_lengths": {"min_length": 5, "max_length": 10},
+            },
+        }
+
+        exps = self._profiling_exps(
+            generator.generate_baseline_column_expectations(column)
+        )
+
+        length_exps = [
+            e for e in exps if e["type"] == "expect_column_value_lengths_to_be_between"
+        ]
+        assert len(length_exps) == 1
+        assert length_exps[0]["kwargs"]["min_value"] == 5
+        assert length_exps[0]["kwargs"]["max_value"] == 10
+
+    def test_string_length_skipped_when_baseline_has_length(self, generator):
+        """Column with string_lengths but also max_length in UMF generates no profiling length."""
+        column = {
+            "name": "code",
+            "data_type": "VARCHAR",
+            "max_length": 20,
+            "profiling": {
+                "string_lengths": {"min_length": 5, "max_length": 10},
+            },
+        }
+
+        exps = self._profiling_exps(
+            generator.generate_baseline_column_expectations(column)
+        )
+
+        length_exps = [
+            e for e in exps if e["type"] == "expect_column_value_lengths_to_be_between"
+        ]
+        # Baseline already covers length; profiling should not add another
+        assert length_exps == []
+
+    def test_regex_pattern(self, generator):
+        """Column with patterns generates regex expectation."""
+        column = {
+            "name": "state_code",
+            "data_type": "VARCHAR",
+            "profiling": {
+                "patterns": ["^[A-Z]{2}$"],
+            },
+        }
+
+        exps = self._profiling_exps(
+            generator.generate_baseline_column_expectations(column)
+        )
+
+        regex_exps = [
+            e for e in exps if e["type"] == "expect_column_values_to_match_regex"
+        ]
+        assert len(regex_exps) == 1
+        assert regex_exps[0]["kwargs"]["regex"] == "^[A-Z]{2}$"
+        assert regex_exps[0]["kwargs"]["mostly"] == 0.95
+
+    def test_no_profiling_data_returns_empty(self, generator):
+        """Column without profiling key generates no profiling expectations."""
+        column = {
+            "name": "plain_col",
+            "data_type": "VARCHAR",
+        }
+
+        exps = self._profiling_exps(
+            generator.generate_baseline_column_expectations(column)
+        )
+
+        assert exps == []
+
+    def test_all_profiling_expectations_have_correct_meta(self, generator):
+        """All profiling expectations have generated_from=profiling and severity=warning."""
+        column = {
+            "name": "rich_col",
+            "data_type": "VARCHAR",
+            "profiling": {
+                "completeness": 1.0,
+                "approximate_num_distinct": 500,
+                "num_records": 500,
+                "statistics": {"min": 1, "max": 99},
+                "distinct_values": ["X", "Y"],
+                "string_lengths": {"min_length": 1, "max_length": 5},
+                "patterns": ["^[A-Z]$"],
+            },
+        }
+
+        exps = self._profiling_exps(
+            generator.generate_baseline_column_expectations(column)
+        )
+
+        assert len(exps) >= 5  # uniqueness, range, not-null, value-set, regex (length skipped? no, no baseline length)
+
+        for exp in exps:
+            assert exp["meta"]["generated_from"] == "profiling"
+            assert exp["meta"]["severity"] == "warning"
+            assert "description" in exp["meta"]
