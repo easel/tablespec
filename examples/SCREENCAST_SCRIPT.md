@@ -149,48 +149,50 @@ workflows.
 
 ---
 
-### ACT 8: Spark Session (Section 8)
+### ACT 8: CLI Authoring Commands (Scene 13)
+
+> CLI commands add a column, modify its type, rename with alias, set a domain type, and remove a validation expectation.
+
+**NARRATOR:** CLI commands for schema authoring. Add a column, modify its
+type, rename it with alias preservation. Assign domain types from the
+built-in registry. And manage validation expectations — all without
+touching YAML directly.
+
+---
+
+### ACT 9a: Spark Session (Section 14)
 
 > Spark 4.0.1 session is created. A DataFrame with 5 claims is displayed.
 
-**NARRATOR:** Now we enter PySpark territory. We create a local Spark
-session — the same factory function works on Databricks, it auto-detects
-the environment. We create a sample DataFrame with five claims, including
-one with a NULL amount.
+**NARRATOR:** Now we enter PySpark territory. Creating a Spark session
+and a sample DataFrame with five claims.
 
 ---
 
-### ACT 9: Profiling (Section 9)
+### ACT 9b: Profiling (Section 9)
 
 > SparkToUmfMapper infers column types from the DataFrame.
 
-**NARRATOR:** SparkToUmfMapper goes the other direction — from a Spark
-DataFrame back to UMF. It infers column names, types, and nullability.
-Useful for onboarding existing tables that don't have a UMF spec yet.
+**NARRATOR:** SparkToUmfMapper infers a UMF schema from the DataFrame.
+Column names, types, and nullability, all detected automatically.
 
 ---
 
-### ACT 10: Validation (Section 10)
+### ACT 9c: Validation (Section 10)
 
 > One validation error: claim_amount has the wrong data type.
 
 **NARRATOR:** TableValidator checks the DataFrame against the UMF spec.
-It found one issue — claim_amount is a double in Spark but DECIMAL in the
-spec. This is exactly the kind of type drift that causes silent data
-corruption in pipelines. The validator returns a structured error DataFrame
-you can write to a monitoring table.
+It catches type drift that causes silent data corruption.
 
 ---
 
-### ACT 11: Sample Data Generation (Section 11)
+### ACT 9d: Sample Data Generation (Section 11)
 
-> Split-format UMF is prepared. 100 rows of claims and providers are generated.
+> 100 rows of claims and providers are generated from UMF specs.
 
-**NARRATOR:** Finally, sample data generation. We save the UMF specs in
-split format — the git-friendly directory structure — and generate 100 rows
-for each table. The generator respects column types, nullable rules, and
-produces realistic values. Provider NPIs are 10 digits. State codes are
-real states. Foreign keys are coherent across tables.
+**NARRATOR:** Sample data generation from UMF specs. 100 rows per table,
+respecting types, nullable rules, and domain constraints.
 
 ---
 

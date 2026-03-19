@@ -149,7 +149,34 @@ echo
 run uv run python examples/scene.py diff
 wait_for_clip "${CLIP_diff:-5}" 3
 
-# ─── Scene 9: SQL Plan Generation ────────────────────────────────
+# ─── Scene 9: Context-Aware Nullable ─────────────────────────────
+
+divider
+mark "context"
+narrate "Context-aware validation. Different rules for each LOB, all from one YAML."
+echo
+run uv run python examples/scene.py context
+wait_for_clip "${CLIP_context:-6}" 3
+
+# ─── Scene 10: Compatibility Checking ────────────────────────────
+
+divider
+mark "compat"
+narrate "Schema evolution safety. Check backward compatibility before deploying changes."
+echo
+run uv run python examples/scene.py compat
+wait_for_clip "${CLIP_compat:-6}" 3
+
+# ─── Scene 11: Excel Round-Trip ──────────────────────────────────
+
+divider
+mark "excel"
+narrate "Export to Excel for domain experts. Import their edits back — no data loss."
+echo
+run uv run python examples/scene.py excel
+wait_for_clip "${CLIP_excel:-5}" 3
+
+# ─── Scene 12: SQL Plan Generation ───────────────────────────────
 
 divider
 mark "sql_plan"
@@ -158,14 +185,37 @@ echo
 run uv run python examples/scene.py sql_plan
 wait_for_clip "${CLIP_sql_plan:-8}" 4
 
-# ─── Scene 10: Spark ─────────────────────────────────────────────
+# ─── Scene 13: CLI Mutations ──────────────────────────────────────
 
 divider
-mark "spark"
-narrate "Now the PySpark features: session, profiling, validation, and sample data."
+mark "cli"
+narrate "CLI commands for schema authoring. Add, modify, rename columns. Set domain types. Manage validation rules."
 echo
-run uv run python examples/scene.py spark 2>/dev/null
-wait_for_clip "${CLIP_spark:-10}" 20
+run uv run python examples/scene.py cli
+wait_for_clip "${CLIP_cli:-10}" 8
+
+# ─── Scene 14: Spark ─────────────────────────────────────────────
+
+divider
+mark "spark_session"
+narrate "Starting a Spark session and creating a sample DataFrame."
+echo
+printf "${GREEN}\$ uv run python examples/scene.py spark${RESET}\n"
+
+uv run python examples/scene.py spark 2>/dev/null | while IFS= read -r line; do
+    case "$line" in
+        "###MARK:"*"###")
+            scene_name="${line#\#\#\#MARK:}"
+            scene_name="${scene_name%\#\#\#}"
+            mark "$scene_name"
+            ;;
+        *)
+            printf '%s\n' "$line"
+            ;;
+    esac
+done
+
+wait_for_clip "${CLIP_spark_sample:-10}" 5
 
 # ─── Close ────────────────────────────────────────────────────────
 

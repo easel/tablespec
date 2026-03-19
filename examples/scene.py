@@ -12,6 +12,9 @@ Scenes:
   gx        Great Expectations baseline
   prompts   LLM prompt generation
   diff      UMF diffing & change detection
+  context   Context-aware nullable expectations
+  compat    Compatibility checking
+  excel     Excel round-trip
   spark     PySpark sections 8-11 (session, profile, validate, sample data)
 """
 
@@ -191,6 +194,82 @@ def scene_diff():
         print(f"  {c.description()}")
 
 
+def scene_context():
+    from tablespec import BaselineExpectationGenerator
+
+    umf_with_context = {
+        "table_name": "Enrollments",
+        "context_column": "LOB",
+        "columns": [
+            {"name": "member_id", "data_type": "VARCHAR", "nullable": {"MD": False, "MP": True, "ME": False}},
+            {"name": "LOB", "data_type": "VARCHAR"},
+        ],
+    }
+
+    gen = BaselineExpectationGenerator()
+    exps = gen.generate_baseline_expectations(umf_with_context, include_structural=False)
+    row_cond = [e for e in exps if "row_condition" in e.get("kwargs", {})]
+
+    print(f"{len(exps)} expectations generated ({len(row_cond)} context-aware):\n")
+    for exp in row_cond:
+        col = exp["kwargs"].get("column", "")
+        cond = exp["kwargs"]["row_condition"]
+        print(f"  {exp['type']}")
+        print(f"    column={col}  row_condition={cond}")
+
+    print(f"\nDifferent LOBs get different nullable rules — from one YAML.")
+
+
+def scene_compat():
+    from tablespec import UMFColumn, check_compatibility, load_umf_from_yaml
+
+    claims = load_umf_from_yaml(str(CLAIMS_YAML))
+    modified = deepcopy(claims)
+    modified.columns[1].data_type = "INTEGER"  # Narrowing DECIMAL -> INTEGER
+    modified.columns.append(
+        UMFColumn(name="diagnosis_code", data_type="VARCHAR", description="ICD-10 code")
+    )
+
+    report = check_compatibility(claims, modified)
+
+    print(f"Backward compatible: {report.is_backward_compatible}")
+    print(f"Forward compatible:  {report.is_forward_compatible}")
+    print(f"Issues found: {len(report.issues)}\n")
+    for issue in report.issues:
+        print(f"  [{issue.severity:8s}] {issue.component}: {issue.description}")
+
+
+def scene_excel():
+    from tablespec import UMFToExcelConverter, load_umf_from_yaml
+
+    claims = load_umf_from_yaml(str(CLAIMS_YAML))
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        excel_path = Path(f.name)
+
+    try:
+        exporter = UMFToExcelConverter()
+        workbook = exporter.convert(claims)
+        workbook.save(str(excel_path))
+        size = excel_path.stat().st_size
+
+        print(f"Exported to Excel: {excel_path.name} ({size:,} bytes)")
+        print(f"Sheets: {workbook.sheetnames}")
+
+        cols_sheet = workbook["Columns"]
+        headers = [cell.value for cell in cols_sheet[1] if cell.value]
+        nullable_headers = [h for h in headers if h.startswith("Nullable")]
+        print(f"Nullable columns in Excel: {nullable_headers}")
+
+        # Show a few rows from the Columns sheet
+        print(f"\nColumns sheet preview:")
+        for row in cols_sheet.iter_rows(min_row=1, max_row=4, values_only=True):
+            vals = [str(v) if v is not None else "" for v in row[:5]]
+            print(f"  {' | '.join(vals)}")
+    finally:
+        excel_path.unlink(missing_ok=True)
+
+
 def scene_spark():
     import time
 
@@ -228,6 +307,7 @@ def scene_spark():
         Row(claim_id="CLM-005", claim_amount=4100.00, provider_id="PRV002"),
     ])
     claims_df.show()
+    print("###MARK:spark_profile###", flush=True)
 
     # --- Section 9: Profile ---
     print(f"{'=' * 60}")
@@ -238,6 +318,7 @@ def scene_spark():
     inferred = mapper.map_dataframe_to_umf(claims_df, table_name="InferredClaims")
     for col in inferred["columns"]:
         print(f"  {col['name']:20s} -> {col['data_type']:10s} nullable={col['nullable']}")
+    print("###MARK:spark_validate###", flush=True)
 
     # --- Section 10: Validate ---
     print(f"\n{'=' * 60}")
@@ -257,6 +338,7 @@ def scene_spark():
         error_df.select("error_type", "column_name", "error_message").show(truncate=60)
         print("(Expected: Spark infers double, UMF spec says DECIMAL)")
     umf_path.unlink(missing_ok=True)
+    print("###MARK:spark_sample###", flush=True)
 
     # --- Section 11: Sample Data ---
     print(f"{'=' * 60}")
@@ -416,6 +498,58 @@ def scene_sql_plan():
         print(f"... ({len(lines)} total lines)")
 
 
+def scene_cli():
+    """Demonstrate the CLI mutation commands."""
+    import subprocess
+
+    from tablespec import load_umf_from_yaml
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, dir=tempfile.gettempdir()
+    ) as f:
+        umf = load_umf_from_yaml(str(CLAIMS_YAML))
+        d = umf.model_dump(mode="json", exclude_none=True)
+        f.write(json.dumps(d, indent=2))
+        umf_path = f.name
+
+    def run_cmd(args: list[str]) -> None:
+        cmd = ["uv", "run", "tablespec", *args]
+        print(f"$ tablespec {' '.join(args)}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.stdout.strip():
+            print(result.stdout.strip())
+        if result.stderr.strip() and result.returncode != 0:
+            print(result.stderr.strip())
+        print()
+
+    print("--- Column Mutations ---\n")
+    run_cmd(["column-add", umf_path, "--name", "service_date", "--type", "DATE", "--description", "Date of service"])
+    run_cmd(["column-modify", umf_path, "--name", "service_date", "--type", "DATETIME"])
+    run_cmd(["column-rename", umf_path, "--from", "service_date", "--to", "svc_dt", "--keep-alias"])
+
+    print("--- Domain Assignment ---\n")
+    run_cmd(["domains-set", umf_path, "--column", "provider_id", "--type", "npi"])
+
+    print("--- Validation Management ---\n")
+    run_cmd(["validation-remove", umf_path, "--type", "expect_column_values_to_not_be_null", "--column", "claim_id"])
+
+    # Show final state
+    d = json.loads(Path(umf_path).read_text())
+    print("Final columns:")
+    for col in d["columns"]:
+        dt = col.get("domain_type", "")
+        alias = col.get("aliases", [])
+        extras = []
+        if dt:
+            extras.append(f"domain={dt}")
+        if alias:
+            extras.append(f"aliases={alias}")
+        extra_str = f"  ({', '.join(extras)})" if extras else ""
+        print(f"  {col['name']:20s} {col['data_type']:10s}{extra_str}")
+
+    Path(umf_path).unlink(missing_ok=True)
+
+
 # ─── Dispatch ─────────────────────────────────────────────────────
 
 SCENES = {
@@ -427,8 +561,12 @@ SCENES = {
     "gx": scene_gx,
     "prompts": scene_prompts,
     "diff": scene_diff,
+    "context": scene_context,
+    "compat": scene_compat,
+    "excel": scene_excel,
     "sql_plan": scene_sql_plan,
     "spark": scene_spark,
+    "cli": scene_cli,
 }
 
 if __name__ == "__main__":

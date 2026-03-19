@@ -42,7 +42,14 @@ gen_clip "gx"       "Generate a full Great Expectations suite deterministically 
 gen_clip "prompts"  "Generate structured prompts for LLMs. Documentation prompts. Validation rule prompts. All the column metadata and domain context is included automatically."
 gen_clip "diff"     "Schema evolution tracking. Modify a table and see exactly what changed. Added columns. Modified descriptions."
 gen_clip "sql_plan" "Generate full SQL execution plans from UMF metadata. Joins, column derivations, survivorship logic, aggregations. All computed automatically from the schema relationships."
-gen_clip "spark"    "Now the PySpark features. Starting a Spark session. Creating DataFrames. Profiling schemas. Validating data against UMF specs. And generating sample data. All from the same UMF metadata."
+gen_clip "context"  "Context-aware validation. Different nullable rules for each Line of Business, all from one YAML file."
+gen_clip "compat"   "Schema evolution safety. Check backward compatibility before deploying changes."
+gen_clip "excel"    "Export to Excel for domain experts. Import their edits back with no data loss."
+gen_clip "cli"      "CLI commands for schema authoring. Add a column, modify its type, rename it with alias preservation. Assign domain types from the built-in registry. And manage validation expectations — all without touching YAML directly."
+gen_clip "spark_session"   "Now we enter PySpark territory. Creating a Spark session and a sample DataFrame with five claims."
+gen_clip "spark_profile"   "SparkToUmfMapper infers a UMF schema from the DataFrame. Column names, types, and nullability, all detected automatically."
+gen_clip "spark_validate"  "TableValidator checks the DataFrame against the UMF spec. It catches type drift that causes silent data corruption."
+gen_clip "spark_sample"    "Sample data generation from UMF specs. 100 rows per table, respecting types, nullable rules, and domain constraints."
 gen_clip "close"    "That's tablespec. Define once. Use everywhere."
 
 echo
@@ -61,7 +68,14 @@ CLIP_gx=${CLIP_DUR[gx]}
 CLIP_prompts=${CLIP_DUR[prompts]}
 CLIP_diff=${CLIP_DUR[diff]}
 CLIP_sql_plan=${CLIP_DUR[sql_plan]}
-CLIP_spark=${CLIP_DUR[spark]}
+CLIP_context=${CLIP_DUR[context]}
+CLIP_compat=${CLIP_DUR[compat]}
+CLIP_excel=${CLIP_DUR[excel]}
+CLIP_cli=${CLIP_DUR[cli]}
+CLIP_spark_session=${CLIP_DUR[spark_session]}
+CLIP_spark_profile=${CLIP_DUR[spark_profile]}
+CLIP_spark_validate=${CLIP_DUR[spark_validate]}
+CLIP_spark_sample=${CLIP_DUR[spark_sample]}
 CLIP_close=${CLIP_DUR[close]}
 EOF
 
@@ -91,6 +105,81 @@ print(f'{last_ts:.0f}')
 echo "  Recorded: ${CAST}  (${CAST_DUR}s)"
 echo
 
+# ─── Step 2.5: Compress idle gaps in cast file ──────────────────
+
+echo "Step 2.5: Compressing idle gaps (max 2s)..."
+
+python3 -c "
+import json
+MAX_IDLE = 2.0
+CAST = '$CAST'
+with open(CAST) as f:
+    lines = f.readlines()
+header = lines[0]
+events = [json.loads(l) for l in lines[1:]]
+shift = 0
+prev_orig = 0
+for evt in events:
+    orig_ts = evt[0]
+    gap = orig_ts - prev_orig
+    if gap > MAX_IDLE:
+        shift += gap - MAX_IDLE
+    evt[0] = round(orig_ts - shift, 6)
+    prev_orig = orig_ts
+with open(CAST, 'w') as f:
+    f.write(header)
+    for evt in events:
+        f.write(json.dumps(evt) + '\n')
+print(f'  Compressed: removed {shift:.1f}s of idle time')
+last_ts = events[-1][0] if events else 0
+print(f'  New duration: {last_ts:.0f}s')
+"
+
+# Apply same compression to timing log
+python3 -c "
+import json
+MAX_IDLE = 2.0
+CAST = '$CAST'
+TIMING_LOG = '/tmp/screencast_timing.log'
+
+# Rebuild the same shift table from the cast
+with open(CAST) as f:
+    lines = f.readlines()
+# The cast is already compressed, but we need the original timestamps
+# to compute shifts. Re-read to get compressed timestamps.
+# Instead, compress the timing log offsets using the same algorithm.
+
+with open(TIMING_LOG) as f:
+    tlines = f.readlines()
+start_epoch = tlines[0].strip()
+
+# Collect all offsets
+entries = []
+for line in tlines[1:]:
+    parts = line.strip().split()
+    if len(parts) == 2:
+        entries.append((parts[0], float(parts[1])))
+
+# Apply same gap compression
+shift = 0
+prev_orig = 0
+compressed_entries = []
+for name, offset in entries:
+    gap = offset - prev_orig
+    if gap > MAX_IDLE:
+        shift += gap - MAX_IDLE
+    compressed_entries.append((name, round(offset - shift, 2)))
+    prev_orig = offset
+
+# Write back
+with open(TIMING_LOG, 'w') as f:
+    f.write(start_epoch + '\n')
+    for name, offset in compressed_entries:
+        f.write(f'{name} {offset}\n')
+print('  Timing log compressed to match')
+"
+echo
+
 # ─── Step 4: Convert to GIF and MP4 ─────────────────────────────
 
 echo "Step 3: Converting to GIF and MP4..."
@@ -98,7 +187,7 @@ echo "Step 3: Converting to GIF and MP4..."
 GIF="examples/tablespec-demo.gif"
 MP4="examples/tablespec-demo.mp4"
 
-agg --font-family "JetBrains Mono" \
+agg --font-family "JetBrainsMono Nerd Font" \
     --font-size 16 \
     --theme asciinema \
     "$CAST" "$GIF" 2>/dev/null
