@@ -20,20 +20,20 @@ Python library for working with table schemas in Universal Metadata Format (UMF)
 
 ## Demo
 
-![tablespec demo](examples/tablespec-demo.gif)
+[![asciicast](https://github.com/easel/tablespec/raw/main/examples/tablespec-demo.gif)](https://github.com/easel/tablespec/blob/main/examples/tablespec-demo.cast)
 
 The demo walks through loading a UMF schema, generating SQL/PySpark/JSON schemas, type mappings, domain type inference, Great Expectations baseline generation, LLM prompt generation, UMF diffing, and PySpark validation with sample data generation.
 
-[**Watch with narration (MP4)**](https://github.com/easel/tablespec/raw/main/examples/tablespec-demo-narrated.mp4) | [**asciinema recording**](examples/tablespec-demo.cast)
+[**Watch with narration (MP4)**](https://github.com/easel/tablespec/raw/main/examples/tablespec-demo-narrated.mp4)
 
-Run it yourself:
+Play the asciinema recording in your terminal:
 
 ```bash
-# Run the demo (requires tablespec[spark])
-uv run python examples/demo.py
+# Install asciinema, then play the recording
+asciinema play examples/tablespec-demo.cast
 
-# Run as acceptance test
-uv run pytest tests/integration/test_demo.py
+# Or run the demo live (requires tablespec[spark])
+uv run python examples/demo.py
 ```
 
 ## Installation
