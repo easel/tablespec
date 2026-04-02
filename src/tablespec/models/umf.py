@@ -1324,6 +1324,12 @@ class UMF(BaseModel):
         default=None,
         description="Ingestion strategy. Controls file filtering, deduplication, and write mode.",
     )
+    context_column: str | None = Field(
+        default=None,
+        description="Column used for context-based conditional validation (e.g. 'LOB' for "
+        "healthcare line-of-business, 'segment' for fintech). When set, nullable rules with "
+        "per-context keys generate filtered expectations using row_condition.",
+    )
 
     @field_validator("columns")
     @classmethod
@@ -1368,6 +1374,40 @@ class UMF(BaseModel):
                 raise ValueError(msg)
 
         return v
+
+    @model_validator(mode="after")
+    def validate_context_column(self) -> Self:
+        """Validate that context_column references an existing column."""
+        if self.context_column is not None:
+            col_names = {col.name for col in self.columns}
+            if self.context_column not in col_names:
+                msg = f"context_column '{self.context_column}' not found in columns: {sorted(col_names)}"
+                raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def warn_deprecated_legacy_fields(self) -> Self:
+        """Emit DeprecationWarning when legacy expectation fields are populated.
+
+        ADR-005 Phase C: consumers have migrated to ExpectationSuite.
+        The validation_rules and quality_checks fields are retained for
+        backward-compatible loading but should not be populated directly.
+        """
+        if self.validation_rules is not None:
+            warnings.warn(
+                "UMF.validation_rules is deprecated. Use UMF.expectations "
+                "(ExpectationSuite) instead. See ADR-005.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if self.quality_checks is not None:
+            warnings.warn(
+                "UMF.quality_checks is deprecated. Use UMF.expectations "
+                "(ExpectationSuite) instead. See ADR-005.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return self
 
     @field_validator("version")
     @classmethod

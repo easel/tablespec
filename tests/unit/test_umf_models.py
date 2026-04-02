@@ -718,3 +718,53 @@ class TestPropertyBasedUMF:
             assert new_col.description == orig_col.description
 
 
+
+class TestDeprecationWarnings:
+    """Test that legacy fields emit DeprecationWarning per ADR-005 Phase C."""
+
+    def test_validation_rules_emits_warning(self):
+        from tablespec.models.umf import ValidationRules
+
+        with pytest.warns(DeprecationWarning, match="UMF.validation_rules is deprecated"):
+            UMF(
+                version="1.0",
+                table_name="test",
+                columns=[UMFColumn(name="id", data_type="INTEGER")],
+                validation_rules=ValidationRules(expectations=[]),
+            )
+
+    def test_quality_checks_emits_warning(self):
+        from tablespec.models.umf import QualityChecks
+
+        with pytest.warns(DeprecationWarning, match="UMF.quality_checks is deprecated"):
+            UMF(
+                version="1.0",
+                table_name="test",
+                columns=[UMFColumn(name="id", data_type="INTEGER")],
+                quality_checks=QualityChecks(checks=[]),
+            )
+
+    def test_expectations_field_does_not_warn(self):
+        import warnings as _warnings
+
+        from tablespec.models.umf import ExpectationSuite
+
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error", DeprecationWarning)
+            UMF(
+                version="1.0",
+                table_name="test",
+                columns=[UMFColumn(name="id", data_type="INTEGER")],
+                expectations=ExpectationSuite(expectations=[]),
+            )
+
+    def test_no_expectation_fields_does_not_warn(self):
+        import warnings as _warnings
+
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error", DeprecationWarning)
+            UMF(
+                version="1.0",
+                table_name="test",
+                columns=[UMFColumn(name="id", data_type="INTEGER")],
+            )

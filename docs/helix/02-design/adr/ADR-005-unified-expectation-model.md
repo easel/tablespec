@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted (Phase C — consumers migrated to ExpectationSuite; legacy fields emit DeprecationWarning)
 
 ## Context
 
