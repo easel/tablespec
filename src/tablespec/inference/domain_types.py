@@ -6,7 +6,7 @@ columns with domain types, which are then consumed by Phase 4 (validation) and P
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 import re
 from typing import Any

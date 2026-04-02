@@ -72,6 +72,7 @@ dev = [
 testpaths = ["tests"]
 markers = [
     "acceptance: acceptance criteria tests tied to user stories",
+    "contract: marks contract tests that require dedicated compatibility coverage",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "fast: marks tests that complete in <100ms with no I/O or external deps",
     "no_spark: marks tests that do not require PySpark",

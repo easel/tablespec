@@ -352,7 +352,7 @@ def setup_jdk(bin_dir: Path, share_dir: Path) -> None:
                     break
 
         if not java_home_path:
-            print(f"  Could not determine JAVA_HOME from Coursier")
+            print("  Could not determine JAVA_HOME from Coursier")
             print(f"   --env output was:\n{env_result.stdout}")
             msg = "Could not determine JAVA_HOME from Coursier"
             raise RuntimeError(msg)
@@ -736,7 +736,7 @@ def setup_spark() -> None:
         print("\nSpark verification failed - setup incomplete")
         sys.exit(1)
 
-    print(f"\nSpark 4.0 setup complete!")
+    print("\nSpark 4.0 setup complete!")
     print(f"  SPARK_HOME: {spark_home}")
     print(f"  JAVA_HOME:  {java_home_path}")
 

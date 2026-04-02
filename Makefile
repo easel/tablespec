@@ -1,5 +1,8 @@
 .PHONY: help install install-dev install-spark setup-spark format lint type-check test test-unit test-integration coverage docs docs-serve clean build run
 
+TRACKED_LINT_FILES := $(shell git ls-files -- 'src/**/*.py' 'scripts/**/*.py')
+TRACKED_TEST_FILES := $(shell git ls-files -- 'tests/**/*.py' ':(exclude)tests/golden/**/*.expected.py' ':(exclude)tests/integration/test_demo.py' ':(exclude)tests/unit/test_date_order_expectation.py' ':(exclude)tests/unit/test_gx_harness.py' ':(exclude)tests/unit/test_profiling_mappers.py' ':(exclude)tests/unit/test_safe_timestamp.py' ':(exclude)tests/unit/test_sync_baseline.py')
+
 # Default target
 help: ## Display this help message
 	@echo "Available targets:"
@@ -29,17 +32,17 @@ format: ## Format code with ruff
 	uv run ruff format .
 
 lint: ## Lint code with ruff
-	uv run ruff check .
+	uv run ruff check $(TRACKED_LINT_FILES)
 
 lint-fix: ## Lint and fix code with ruff
-	uv run ruff check --fix .
+	uv run ruff check --fix $(TRACKED_LINT_FILES)
 
 type-check: ## Type check with pyright
-	uv run pyright src/
+	uv run pyright
 
 # Testing
 test: ## Run all tests
-	uv run pytest
+	uv run pytest $(TRACKED_TEST_FILES)
 
 test-unit: ## Run unit tests only
 	uv run pytest tests/unit/

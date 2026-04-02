@@ -395,7 +395,6 @@ def check_compatibility(old: UMF, new: UMF) -> CompatibilityReport:
     _check_primary_key(old, new, issues)
 
     # --- Compute summary flags ---
-    has_breaking = any(i.severity == "breaking" for i in issues)
     # Forward compatible = new schema can consume data written with old schema
     # This is broken if columns were added that are required
     has_forward_breaking = any(
