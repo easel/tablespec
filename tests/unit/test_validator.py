@@ -255,7 +255,7 @@ class TestValidateTable:
         assert success is False
         assert any("nonexistent_col" in e for e in errors)
 
-    @patch("tablespec.validator.get_gx_wrapper", None)
+    @patch("tablespec.validator.GXSuiteExecutor", None)
     @patch("tablespec.validator.validate_naming_conventions", return_value=[])
     @patch("tablespec.validator.validate_provenance_columns", return_value=[])
     @patch("tablespec.validator.validate_domain_types", return_value=[])

@@ -109,6 +109,77 @@ class TestExecuteSuiteEmpty:
         assert result.total == 0
 
 
+class TestValidateExpectation:
+    def test_validate_expectation_success(self):
+        executor = GXSuiteExecutor(spark=None)
+
+        import types
+
+        mock_suite_cls = MagicMock()
+        mock_suite = MagicMock()
+        mock_suite_cls.return_value = mock_suite
+        mock_config_cls = MagicMock()
+
+        core_module = types.ModuleType("great_expectations.core")
+        core_module.ExpectationSuite = mock_suite_cls
+        config_module = types.ModuleType(
+            "great_expectations.expectations.expectation_configuration"
+        )
+        config_module.ExpectationConfiguration = mock_config_cls
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "great_expectations.core": core_module,
+                "great_expectations.expectations.expectation_configuration": config_module,
+            },
+        ):
+            is_valid, error = executor.validate_expectation(
+                "expect_column_to_exist",
+                {"column": "id"},
+                {"severity": "critical"},
+            )
+
+        assert is_valid is True
+        assert error is None
+        mock_suite_cls.assert_called_once_with(name="validation_test")
+        mock_config_cls.assert_called_once_with(
+            type="expect_column_to_exist",
+            kwargs={"column": "id"},
+            meta={"severity": "critical"},
+        )
+        mock_suite.add_expectation_configuration.assert_called_once()
+
+    def test_validate_expectation_failure(self):
+        executor = GXSuiteExecutor(spark=None)
+
+        import types
+
+        mock_suite_cls = MagicMock(side_effect=ValueError("bad expectation"))
+        core_module = types.ModuleType("great_expectations.core")
+        core_module.ExpectationSuite = mock_suite_cls
+        config_module = types.ModuleType(
+            "great_expectations.expectations.expectation_configuration"
+        )
+        config_module.ExpectationConfiguration = MagicMock()
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "great_expectations.core": core_module,
+                "great_expectations.expectation_configuration": config_module,
+                "great_expectations.expectations.expectation_configuration": config_module,
+            },
+        ):
+            is_valid, error = executor.validate_expectation(
+                "bad_type",
+                {"column": "id"},
+            )
+
+        assert is_valid is False
+        assert "bad expectation" in error
+
+
 # ── execute_staged: classification and routing ────────────────────────
 
 

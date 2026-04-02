@@ -29,11 +29,10 @@ from tablespec.survivorship_display import SurvivorshipValidator
 from tablespec.type_mappings import VALID_PYSPARK_TYPES
 from tablespec.umf_loader import UMFFormat, UMFLoader
 
-# gx_wrapper may not be ported yet
 try:
-    from tablespec.gx_wrapper import get_gx_wrapper
+    from tablespec.validation.gx_executor import GXSuiteExecutor
 except ImportError:
-    get_gx_wrapper = None  # type: ignore[assignment]
+    GXSuiteExecutor = None  # type: ignore[assignment]
 
 # Cache the JSON schema at module level since it never changes at runtime
 _UMF_JSON_SCHEMA: dict[str, Any] = UMF.model_json_schema()
@@ -185,13 +184,13 @@ def validate_table(
 
         # 5. Validate expectations if present
         if umf.validation_rules and umf.validation_rules.expectations:
-            # Get GX wrapper for validation - catches param errors like column_list < 2
-            gx_wrapper = None
-            if get_gx_wrapper is not None:
+            # Validate expectation configuration through the consolidated GX executor.
+            gx_executor = None
+            if GXSuiteExecutor is not None:
                 try:
-                    gx_wrapper = get_gx_wrapper()
+                    gx_executor = GXSuiteExecutor()
                 except ImportError:
-                    gx_wrapper = None
+                    gx_executor = None
 
             column_names = {col.name for col in umf.columns}
 
@@ -209,8 +208,8 @@ def validate_table(
                 meta = exp.get("meta", {})
 
                 # Validate expectation with GX library using actual kwargs
-                if gx_wrapper is not None:
-                    is_valid, gx_error = gx_wrapper.validate_expectation(exp_type, kwargs, meta)
+                if gx_executor is not None:
+                    is_valid, gx_error = gx_executor.validate_expectation(exp_type, kwargs, meta)
                     if not is_valid and gx_error:
                         errors.append(f"Expectation {i} ({exp_type}): {gx_error}")
 

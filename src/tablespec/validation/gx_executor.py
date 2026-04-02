@@ -1,9 +1,13 @@
 """Suite-level GX execution with staged validation support.
 
-Executes entire expectation suites in a single batch pass using the GX Pandas
+Executes entire expectation suites in a single batch pass via the GX Spark
 engine, replacing the per-expectation validator pattern in gx_wrapper.py.
-Supports staged execution where raw (string) and ingested (typed) expectations
-route to different DataFrames.
+
+Requires a Spark or Sail session — use ``get_session()`` from
+``tablespec.session`` to obtain one.
+
+Supports staged execution where raw (string) and ingested (typed)
+expectations route to different DataFrames.
 """
 
 from __future__ import annotations
@@ -62,16 +66,23 @@ class StagedExecutionResult:
 
 
 class GXSuiteExecutor:
-    """Execute GX expectation suites efficiently.
+    """Execute GX expectation suites against Spark DataFrames.
+
+    Requires a Spark or Sail session. All validation runs through the GX
+    Spark execution engine.
 
     Supports two execution modes:
     - execute_suite(): Run all expectations against a single DataFrame
     - execute_staged(): Classify and route expectations to raw/ingested DataFrames
-
-    Uses GX Pandas execution engine for lightweight validation.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, spark: Any | None = None) -> None:
+        """Initialise the executor.
+
+        Args:
+            spark: A ``SparkSession`` (from Spark or Sail).
+        """
+        self._spark = spark
         self._context: Any | None = None
 
     def _get_context(self) -> Any:
@@ -81,95 +92,55 @@ class GXSuiteExecutor:
             self._context = gx.get_context()  # type: ignore[attr-defined]
         return self._context
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def execute_suite(
         self,
-        df: Any,  # pandas DataFrame
+        df: Any,
         expectations: list[dict[str, Any]],
     ) -> SuiteExecutionResult:
-        """Execute all expectations against a single pandas DataFrame in one batch.
+        """Execute all expectations against a Spark DataFrame in one batch.
 
         Args:
-            df: A pandas DataFrame to validate.
+            df: A PySpark DataFrame (from Spark or Sail session).
             expectations: List of expectation dicts with 'type', 'kwargs', and
                 optional 'meta' keys.
 
         Returns:
             SuiteExecutionResult with per-expectation results and summary counts.
         """
+        if not expectations:
+            return SuiteExecutionResult.from_results([])
+
+        return self._execute_spark(df, expectations)
+
+    def validate_expectation(
+        self,
+        exp_type: str,
+        kwargs: dict[str, Any],
+        meta: dict[str, Any] | None = None,
+    ) -> tuple[bool, str | None]:
+        """Validate a single expectation configuration without executing it."""
         from great_expectations.core import ExpectationSuite as GXSuite
-        from great_expectations.core import ValidationDefinition
         from great_expectations.expectations.expectation_configuration import (
             ExpectationConfiguration,
         )
 
-        if not expectations:
-            return SuiteExecutionResult.from_results([])
-
-        context = self._get_context()
-        run_id = uuid.uuid4().hex[:8]
-
-        # Build suite with all expectations
-        suite = GXSuite(name=f"suite_{run_id}")
-        for exp in expectations:
-            exp_type = exp.get("type", exp.get("expectation_type", ""))
-            kwargs = exp.get("kwargs", {})
-            meta = exp.get("meta", {})
-            suite.add_expectation_configuration(
-                ExpectationConfiguration(type=exp_type, kwargs=kwargs, meta=meta)
-            )
-        suite = context.suites.add(suite)
-
-        # Set up pandas datasource, asset, and batch definition
-        ds = context.data_sources.pandas_default
-        asset_name = f"asset_{run_id}"
-        batch_name = f"batch_{run_id}"
-        asset = ds.add_dataframe_asset(asset_name)
-        batch_def = asset.add_batch_definition_whole_dataframe(batch_name)
-
-        # Create validation definition and run
-        vd_name = f"vd_{run_id}"
-        vd = context.validation_definitions.add(
-            ValidationDefinition(name=vd_name, suite=suite, data=batch_def)
-        )
-
         try:
-            validation_result = vd.run(batch_parameters={"dataframe": df})
-
-            # Parse results
-            results: list[ExpectationResult] = []
-            for res in validation_result.results:
-                result_dict = res.to_json_dict() if hasattr(res, "to_json_dict") else {}
-                result_obj = result_dict.get("result", {})
-                exp_config = result_dict.get("expectation_config", {})
-
-                results.append(
-                    ExpectationResult(
-                        expectation_type=exp_config.get("type", ""),
-                        success=result_dict.get("success", False),
-                        column=exp_config.get("kwargs", {}).get("column"),
-                        observed_value=result_obj.get("observed_value"),
-                        unexpected_count=result_obj.get("unexpected_count", 0),
-                        unexpected_values=result_obj.get("partial_unexpected_list", []),
-                        details=result_obj,
-                    )
-                )
-
-            return SuiteExecutionResult.from_results(results)
-        finally:
-            # Cleanup ephemeral resources
-            try:
-                context.suites.delete(suite.name)
-            except Exception:
-                pass
-            try:
-                ds.delete_asset(asset_name)
-            except Exception:
-                pass
+            suite = GXSuite(name="validation_test")
+            suite.add_expectation_configuration(
+                ExpectationConfiguration(type=exp_type, kwargs=kwargs, meta=meta or {})
+            )
+            return (True, None)
+        except Exception as exc:
+            return (False, str(exc))
 
     def execute_staged(
         self,
-        raw_df: Any,  # pandas DataFrame with all string columns (raw stage)
-        ingested_df: Any,  # pandas DataFrame with typed columns (ingested stage)
+        raw_df: Any,
+        ingested_df: Any,
         expectations: list[dict[str, Any]],
     ) -> StagedExecutionResult:
         """Classify expectations by stage and execute against appropriate DataFrame.
@@ -179,8 +150,8 @@ class GXSuiteExecutor:
         Redundant/unknown expectations are skipped.
 
         Args:
-            raw_df: DataFrame with string columns representing raw/bronze data.
-            ingested_df: DataFrame with typed columns representing ingested data.
+            raw_df: Spark DataFrame with string columns representing raw/bronze data.
+            ingested_df: Spark DataFrame with typed columns representing ingested data.
             expectations: List of expectation dicts to classify and execute.
 
         Returns:
@@ -228,3 +199,110 @@ class GXSuiteExecutor:
             ingested=ingested_result,
             skipped=skipped,
         )
+
+    # ------------------------------------------------------------------
+    # Internal: Spark execution (works with Spark & Sail)
+    # ------------------------------------------------------------------
+
+    def _execute_spark(
+        self,
+        df: Any,
+        expectations: list[dict[str, Any]],
+    ) -> SuiteExecutionResult:
+        """Execute expectations against a Spark DataFrame via the GX Spark engine."""
+        from great_expectations.core import ExpectationSuite as GXSuite
+        from great_expectations.core import ValidationDefinition
+        from great_expectations.expectations.expectation_configuration import (
+            ExpectationConfiguration,
+        )
+
+        context = self._get_context()
+        run_id = uuid.uuid4().hex[:8]
+
+        # Build suite
+        suite = GXSuite(name=f"suite_{run_id}")
+        for exp in expectations:
+            exp_type = exp.get("type", exp.get("expectation_type", ""))
+            kwargs = exp.get("kwargs", {})
+            meta = exp.get("meta", {})
+            suite.add_expectation_configuration(
+                ExpectationConfiguration(type=exp_type, kwargs=kwargs, meta=meta)
+            )
+        suite = context.suites.add(suite)
+
+        # Set up Spark datasource and asset
+        ds_name = f"spark_ds_{run_id}"
+        asset_name = f"spark_asset_{run_id}"
+        batch_name = f"spark_batch_{run_id}"
+
+        ds = None
+        vd_name = f"vd_{run_id}"
+        try:
+            ds = context.data_sources.add_spark(name=ds_name)
+            asset = ds.add_dataframe_asset(name=asset_name)
+            batch_def = asset.add_batch_definition_whole_dataframe(batch_name)
+
+            vd = context.validation_definitions.add(
+                ValidationDefinition(name=vd_name, suite=suite, data=batch_def)
+            )
+
+            validation_result = vd.run(batch_parameters={"dataframe": df})
+            return self._parse_validation_result(validation_result)
+        finally:
+            self._cleanup(context, suite, ds, ds_name, asset_name, vd_name)
+
+    # ------------------------------------------------------------------
+    # Shared helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_validation_result(validation_result: Any) -> SuiteExecutionResult:
+        """Convert a GX ValidationResult into our SuiteExecutionResult."""
+        results: list[ExpectationResult] = []
+        for res in validation_result.results:
+            result_dict = res.to_json_dict() if hasattr(res, "to_json_dict") else {}
+            result_obj = result_dict.get("result", {})
+            exp_config = result_dict.get("expectation_config", {})
+
+            results.append(
+                ExpectationResult(
+                    expectation_type=exp_config.get("type", ""),
+                    success=result_dict.get("success", False),
+                    column=exp_config.get("kwargs", {}).get("column"),
+                    observed_value=result_obj.get("observed_value"),
+                    unexpected_count=result_obj.get("unexpected_count", 0),
+                    unexpected_values=result_obj.get("partial_unexpected_list", []),
+                    details=result_obj,
+                )
+            )
+
+        return SuiteExecutionResult.from_results(results)
+
+    @staticmethod
+    def _cleanup(
+        context: Any,
+        suite: Any,
+        ds: Any | None,
+        ds_name: str,
+        asset_name: str,
+        vd_name: str | None = None,
+    ) -> None:
+        """Clean up ephemeral GX resources."""
+        if vd_name is not None:
+            try:
+                context.validation_definitions.delete(vd_name)
+            except Exception:
+                pass
+        try:
+            context.suites.delete(suite.name)
+        except Exception:
+            pass
+        if ds is not None:
+            try:
+                ds.delete_asset(asset_name)
+            except Exception:
+                pass
+        try:
+            context.data_sources.delete(ds_name)
+        except Exception:
+            pass
