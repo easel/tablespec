@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tablespec.models.umf import (
+    Expectation,
     INGESTED_QUALITY_CHECK_TYPES,
     RAW_VALIDATION_TYPES,
     UMF,
@@ -22,6 +23,7 @@ class ApplyResult:
     deduplicated: list[dict[str, Any]] = field(default_factory=list)
     invalid: list[tuple[dict[str, Any], str]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    updated_umf: UMF | None = None
 
 
 def apply_validation_response(
@@ -40,10 +42,15 @@ def apply_validation_response(
     """
     known_types = RAW_VALIDATION_TYPES | INGESTED_QUALITY_CHECK_TYPES
     result = ApplyResult()
+    new_expectations: list[Expectation] = []
 
     # Get existing expectations for dedup
     existing_signatures: set[str] = set()
-    suite = umf.expectations or migrate_to_expectation_suite(umf.model_dump(exclude_none=True))
+    suite = (
+        umf.expectations.model_copy(deep=True)
+        if umf.expectations is not None
+        else migrate_to_expectation_suite(umf.model_dump(exclude_none=True))
+    )
     for exp in suite.expectations:
         sig = _expectation_signature(exp)
         existing_signatures.add(sig)
@@ -82,7 +89,19 @@ def apply_validation_response(
             continue
 
         result.added.append(exp_dict)
+        new_expectations.append(Expectation.from_gx_dict(exp_dict))
         existing_signatures.add(sig)
+
+    if new_expectations:
+        result.updated_umf = umf.model_copy(
+            update={
+                "expectations": suite.model_copy(
+                    update={"expectations": [*suite.expectations, *new_expectations]}
+                ),
+                "validation_rules": None,
+                "quality_checks": None,
+            }
+        )
 
     return result
 

@@ -1,6 +1,6 @@
 import pytest
 
-from tablespec.authoring.preview import generate_preview, PreviewResult
+from tablespec.authoring.preview import generate_preview
 
 pytestmark = [pytest.mark.no_spark, pytest.mark.fast]
 
@@ -113,3 +113,33 @@ class TestGeneratePreview:
         }
         result = generate_preview(data)
         assert result.raw[0].severity == "critical"
+
+    def test_prefers_expectation_suite_over_legacy_quality_checks(self):
+        data = {
+            "expectations": {
+                "expectations": [
+                    {
+                        "type": "expect_column_values_to_not_be_null",
+                        "kwargs": {"column": "id"},
+                        "meta": {"validation_stage": "raw", "severity": "critical"},
+                    }
+                ]
+            },
+            "quality_checks": {
+                "checks": [
+                    {
+                        "expectation": {
+                            "type": "expect_column_values_to_be_between",
+                            "kwargs": {"column": "age", "min_value": 0},
+                        },
+                        "severity": "warning",
+                        "blocking": False,
+                    }
+                ]
+            },
+        }
+
+        result = generate_preview(data)
+
+        assert len(result.raw) == 1
+        assert len(result.ingested) == 0

@@ -152,3 +152,26 @@ class TestRemoveExpectation:
         # legacy fields are untouched (None on the builder-produced UMF)
         assert result.quality_checks is None
         assert result.validation_rules is None
+
+    def test_removes_from_migrated_legacy_expectations(self):
+        umf = UMF(
+            version="1.0",
+            table_name="t",
+            columns=[{"name": "id", "data_type": "INTEGER"}],
+            validation_rules={
+                "expectations": [
+                    {
+                        "type": "expect_column_values_to_not_be_null",
+                        "kwargs": {"column": "id"},
+                    }
+                ]
+            },
+        )
+
+        result, count = remove_expectation(umf, "expect_column_values_to_not_be_null", "id")
+
+        assert count == 1
+        assert result.expectations is not None
+        assert result.expectations.expectations == []
+        assert result.validation_rules is None
+        assert result.quality_checks is None

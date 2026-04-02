@@ -15,6 +15,7 @@ def _make_umf(
     columns: list[dict] | None = None,
     validation_rules: dict | None = None,
     quality_checks: dict | None = None,
+    expectations: dict | None = None,
 ) -> UMF:
     """Build a minimal UMF for testing."""
     if columns is None:
@@ -28,6 +29,8 @@ def _make_umf(
         data["validation_rules"] = validation_rules
     if quality_checks is not None:
         data["quality_checks"] = quality_checks
+    if expectations is not None:
+        data["expectations"] = expectations
     return UMF(**data)
 
 
@@ -46,6 +49,8 @@ class TestApplyValidationResponse:
         assert len(result.added) == 1
         assert result.added[0]["meta"]["generated_from"] == "llm"
         assert result.added[0]["meta"]["validation_stage"] == "raw"
+        assert result.updated_umf is not None
+        assert len(result.updated_umf.expectations.expectations) == 1
 
     def test_deduplicates_existing(self):
         umf = _make_umf(
@@ -191,3 +196,53 @@ class TestApplyValidationResponse:
         assert result.deduplicated == []
         assert result.invalid == []
         assert result.warnings == []
+        assert result.updated_umf is None
+
+    def test_updates_expectation_suite_and_clears_legacy_fields(self):
+        umf = _make_umf(
+            validation_rules={
+                "expectations": [
+                    {
+                        "type": "expect_column_values_to_not_be_null",
+                        "kwargs": {"column": "id"},
+                    }
+                ]
+            }
+        )
+        response = [
+            {
+                "type": "expect_column_values_to_match_regex",
+                "kwargs": {"column": "id", "regex": "^\\d+$"},
+            }
+        ]
+
+        result = apply_validation_response(umf, response)
+
+        assert result.updated_umf is not None
+        assert len(result.updated_umf.expectations.expectations) == 2
+        assert result.updated_umf.validation_rules is None
+        assert result.updated_umf.quality_checks is None
+
+    def test_dedup_does_not_create_updated_umf(self):
+        umf = _make_umf(
+            expectations={
+                "expectations": [
+                    {
+                        "type": "expect_column_values_to_not_be_null",
+                        "kwargs": {"column": "id"},
+                        "meta": {"validation_stage": "raw"},
+                    }
+                ]
+            }
+        )
+        response = [
+            {
+                "type": "expect_column_values_to_not_be_null",
+                "kwargs": {"column": "id"},
+            }
+        ]
+
+        result = apply_validation_response(umf, response)
+
+        assert len(result.deduplicated) == 1
+        assert result.updated_umf is None

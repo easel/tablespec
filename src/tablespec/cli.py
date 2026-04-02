@@ -825,7 +825,7 @@ def domains_set(
             raise typer.Exit(1)
 
         loader = UMFLoader()
-        umf = loader.load(table_path)
+        umf = loader.load(Path(table_path))
         updated = modify_column(umf, column, domain_type=domain_type)
         dest = Path(table_path)
         fmt = UMFFormat.JSON if dest.suffix == ".json" else UMFFormat.SPLIT
@@ -857,7 +857,7 @@ def column_add(
 
     try:
         loader = UMFLoader()
-        umf = loader.load(table_path)
+        umf = loader.load(Path(table_path))
 
         kwargs: dict = {}
         if description is not None:
@@ -893,7 +893,7 @@ def column_remove(
 
     try:
         loader = UMFLoader()
-        umf = loader.load(table_path)
+        umf = loader.load(Path(table_path))
         updated = remove_column(umf, name)
         dest = Path(table_path)
         fmt = UMFFormat.JSON if dest.suffix == ".json" else UMFFormat.SPLIT
@@ -924,7 +924,7 @@ def column_modify(
 
     try:
         loader = UMFLoader()
-        umf = loader.load(table_path)
+        umf = loader.load(Path(table_path))
 
         changes: dict = {}
         if data_type is not None:
@@ -966,7 +966,7 @@ def column_rename(
 
     try:
         loader = UMFLoader()
-        umf = loader.load(table_path)
+        umf = loader.load(Path(table_path))
         updated = rename_column(umf, old_name, new_name, keep_alias=keep_alias)
         dest = Path(table_path)
         fmt = UMFFormat.JSON if dest.suffix == ".json" else UMFFormat.SPLIT
@@ -1044,7 +1044,7 @@ def validation_remove(
 
     try:
         loader = UMFLoader()
-        umf = loader.load(table_path)
+        umf = loader.load(Path(table_path))
         updated, count = remove_expectation(umf, expectation_type, column)
 
         if count == 0:
@@ -1106,7 +1106,7 @@ def preview(
     from tablespec.gx_baseline import BaselineExpectationGenerator
 
     loader = UMFLoader()
-    umf = loader.load(table_path)
+    umf = loader.load(Path(table_path))
     umf_data = umf.model_dump()
 
     # Also generate baseline expectations
@@ -1199,6 +1199,10 @@ def apply_response(
             raise typer.Exit(1)
 
         result = apply_validation_response(umf, response)
+
+        if result.updated_umf is not None and not dry_run:
+            fmt = UMFFormat.JSON if source.suffix == ".json" else UMFFormat.SPLIT
+            loader.save(result.updated_umf, source, format=fmt)
 
         if result.added:
             console.print(f"[green]Added:[/green] {len(result.added)} expectations")

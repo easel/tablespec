@@ -72,6 +72,8 @@ def remove_expectation(umf: UMF, expectation_type: str, column: str | None = Non
 
     if removed:
         updates["expectations"] = suite.model_copy(update={"expectations": filtered_expectations})
+        updates["validation_rules"] = None
+        updates["quality_checks"] = None
 
     return umf.model_copy(update=updates) if updates else umf, removed
 
