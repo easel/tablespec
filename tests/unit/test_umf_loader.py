@@ -145,6 +145,250 @@ class TestRoundtripConversion:
             assert result_col.nullable == orig_col.nullable
 
 
+class TestExpectationSuitePersistence:
+    """Test expectations.yaml persistence in split format (ADR-005)."""
+
+    def test_save_split_writes_expectations_yaml(self, tmp_path):
+        """When umf.expectations is populated, saver writes expectations.yaml."""
+        from tablespec.models.umf import Expectation, ExpectationMeta, ExpectationSuite
+
+        loader = UMFLoader()
+        umf = UMF(
+            version="1.0",
+            table_name="test_table",
+            canonical_name="TestTable",
+            columns=[UMFColumn(name="id", data_type="VARCHAR")],
+            expectations=ExpectationSuite(
+                expectations=[
+                    Expectation(
+                        type="expect_column_values_to_not_be_null",
+                        kwargs={"column": "id"},
+                        meta=ExpectationMeta(stage="raw", severity="critical"),
+                    ),
+                ],
+            ),
+        )
+
+        target = tmp_path / "out"
+        loader.save(umf, target)
+
+        assert (target / "expectations.yaml").exists()
+        # Legacy files should NOT be written
+        assert not (target / "validation_rules.yaml").exists()
+        assert not (target / "quality_checks.yaml").exists()
+
+    def test_save_split_expectations_splits_by_column(self, tmp_path):
+        """Column-specific expectations go to column files, cross-column to expectations.yaml."""
+        from tablespec.models.umf import Expectation, ExpectationMeta, ExpectationSuite
+
+        loader = UMFLoader()
+        umf = UMF(
+            version="1.0",
+            table_name="test_table",
+            canonical_name="TestTable",
+            columns=[
+                UMFColumn(name="id", data_type="VARCHAR"),
+                UMFColumn(name="name", data_type="VARCHAR"),
+            ],
+            expectations=ExpectationSuite(
+                expectations=[
+                    # Cross-column expectation
+                    Expectation(
+                        type="expect_table_columns_to_match_set",
+                        kwargs={"column_set": ["id", "name"]},
+                        meta=ExpectationMeta(stage="raw"),
+                    ),
+                    # Column-specific expectation
+                    Expectation(
+                        type="expect_column_values_to_not_be_null",
+                        kwargs={"column": "id"},
+                        meta=ExpectationMeta(stage="raw", severity="critical"),
+                    ),
+                ],
+            ),
+        )
+
+        target = tmp_path / "out"
+        loader.save(umf, target)
+
+        # Cross-column in expectations.yaml
+        exp_data = YAML().load((target / "expectations.yaml").read_text())
+        assert len(exp_data["expectations"]) == 1
+        assert exp_data["expectations"][0]["type"] == "expect_table_columns_to_match_set"
+
+        # Column-specific in column file
+        col_data = YAML().load((target / "columns" / "id.yaml").read_text())
+        assert "validations" in col_data
+        assert len(col_data["validations"]) == 1
+        assert col_data["validations"][0]["type"] == "expect_column_values_to_not_be_null"
+
+    def test_save_split_expectations_thresholds_and_pending(self, tmp_path):
+        """Thresholds, alert_config, and pending are persisted in expectations.yaml."""
+        from tablespec.models.umf import Expectation, ExpectationMeta, ExpectationSuite
+
+        loader = UMFLoader()
+        umf = UMF(
+            version="1.0",
+            table_name="test_table",
+            canonical_name="TestTable",
+            columns=[UMFColumn(name="id", data_type="VARCHAR")],
+            expectations=ExpectationSuite(
+                expectations=[
+                    Expectation(
+                        type="expect_table_columns_to_match_set",
+                        kwargs={"column_set": ["id"]},
+                        meta=ExpectationMeta(stage="raw"),
+                    ),
+                ],
+                pending=[
+                    Expectation(
+                        type="expect_column_values_to_be_unique",
+                        kwargs={"column": "id"},
+                        meta=ExpectationMeta(stage="raw"),
+                    ),
+                ],
+                thresholds={"max_critical_failure_percent": 5.0},
+                alert_config={"channel": "ops"},
+            ),
+        )
+
+        target = tmp_path / "out"
+        loader.save(umf, target)
+
+        exp_data = YAML().load((target / "expectations.yaml").read_text())
+        assert exp_data["thresholds"] == {"max_critical_failure_percent": 5.0}
+        assert exp_data["alert_config"] == {"channel": "ops"}
+        assert len(exp_data["pending"]) == 1
+
+    def test_roundtrip_expectations_via_split(self, tmp_path):
+        """ExpectationSuite survives save→load roundtrip in split format."""
+        from tablespec.models.umf import Expectation, ExpectationMeta, ExpectationSuite
+
+        loader = UMFLoader()
+        umf = UMF(
+            version="1.0",
+            table_name="test_table",
+            canonical_name="TestTable",
+            columns=[
+                UMFColumn(name="id", data_type="VARCHAR"),
+                UMFColumn(name="value", data_type="INTEGER"),
+            ],
+            expectations=ExpectationSuite(
+                expectations=[
+                    Expectation(
+                        type="expect_table_columns_to_match_set",
+                        kwargs={"column_set": ["id", "value"]},
+                        meta=ExpectationMeta(stage="raw"),
+                    ),
+                    Expectation(
+                        type="expect_column_values_to_not_be_null",
+                        kwargs={"column": "id"},
+                        meta=ExpectationMeta(stage="raw", severity="critical"),
+                    ),
+                    Expectation(
+                        type="expect_column_values_to_be_between",
+                        kwargs={"column": "value", "min_value": 0, "max_value": 100},
+                        meta=ExpectationMeta(
+                            stage="ingested", severity="warning", blocking=True
+                        ),
+                    ),
+                ],
+                thresholds={"max_critical_failure_percent": 5.0},
+            ),
+        )
+
+        target = tmp_path / "out"
+        loader.save(umf, target)
+        loaded = loader.load(target)
+
+        assert loaded.expectations is not None
+        assert len(loaded.expectations.expectations) == 3
+        assert len(loaded.expectations.raw) == 2
+        assert len(loaded.expectations.ingested) == 1
+        assert loaded.expectations.thresholds == {"max_critical_failure_percent": 5.0}
+
+    def test_load_expectations_yaml_directly(self, tmp_path):
+        """Loading from a dir with expectations.yaml populates umf.expectations."""
+        (tmp_path / "table.yaml").write_text(
+            "version: '1.0'\ntable_name: test_table\ncanonical_name: TestTable\n"
+        )
+        (tmp_path / "expectations.yaml").write_text(
+            "expectations:\n"
+            "  - type: expect_column_values_to_not_be_null\n"
+            "    kwargs:\n"
+            "      column: id\n"
+            "    meta:\n"
+            "      stage: raw\n"
+            "      severity: critical\n"
+        )
+        (tmp_path / "columns").mkdir()
+        (tmp_path / "columns" / "id.yaml").write_text(
+            "column:\n  name: id\n  data_type: VARCHAR\n"
+        )
+
+        loader = UMFLoader()
+        umf = loader.load(tmp_path)
+
+        assert umf.expectations is not None
+        assert len(umf.expectations.expectations) == 1
+        assert umf.expectations.expectations[0].meta.stage == "raw"
+        assert umf.expectations.expectations[0].meta.severity == "critical"
+
+    def test_load_json_populates_expectations_from_legacy(self, tmp_path):
+        """JSON loader populates expectations from legacy validation_rules."""
+        json_data = {
+            "version": "1.0",
+            "table_name": "test_table",
+            "canonical_name": "TestTable",
+            "columns": [{"name": "id", "data_type": "VARCHAR"}],
+            "validation_rules": {
+                "expectations": [
+                    {
+                        "type": "expect_column_values_to_not_be_null",
+                        "kwargs": {"column": "id"},
+                    }
+                ]
+            },
+        }
+        json_file = tmp_path / "test.json"
+        json_file.write_text(json.dumps(json_data))
+
+        loader = UMFLoader()
+        umf = loader.load(json_file)
+
+        assert umf.expectations is not None
+        assert len(umf.expectations.expectations) == 1
+
+    def test_load_column_validations_merge_into_expectations(self, tmp_path):
+        """Column-level validations merge into expectations suite when expectations.yaml exists."""
+        (tmp_path / "table.yaml").write_text(
+            "version: '1.0'\ntable_name: test_table\ncanonical_name: TestTable\n"
+        )
+        (tmp_path / "expectations.yaml").write_text(
+            "expectations:\n"
+            "  - type: expect_table_columns_to_match_set\n"
+            "    kwargs:\n"
+            "      column_set: [id]\n"
+            "    meta:\n"
+            "      stage: raw\n"
+        )
+        (tmp_path / "columns").mkdir()
+        (tmp_path / "columns" / "id.yaml").write_text(
+            "column:\n  name: id\n  data_type: VARCHAR\n"
+            "validations:\n"
+            "  - type: expect_column_values_to_not_be_null\n"
+            "    kwargs:\n"
+            "      column: id\n"
+        )
+
+        loader = UMFLoader()
+        umf = loader.load(tmp_path)
+
+        assert umf.expectations is not None
+        # 1 from expectations.yaml + 1 from column file
+        assert len(umf.expectations.expectations) == 2
+
+
 class TestQualityChecksPersistence:
     """Test quality_checks persistence in split format."""
 

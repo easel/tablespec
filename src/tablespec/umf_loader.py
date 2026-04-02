@@ -306,6 +306,14 @@ class UMFLoader:
         # Convert all string types to plain Python str for consistency and Spark compatibility
         data = self._convert_yaml_to_plain_strings(data)
 
+        # Populate expectations from legacy fields if not already present (ADR-005)
+        if "expectations" not in data and (
+            "validation_rules" in data or "quality_checks" in data
+        ):
+            from tablespec.expectation_migration import ensure_expectation_suite_data
+
+            data["expectations"] = ensure_expectation_suite_data(data)
+
         umf = UMF(**data)
         if hasattr(umf, "mtime"):
             umf.mtime = file_path.stat().st_mtime
@@ -402,6 +410,16 @@ class UMFLoader:
         except FileNotFoundError:
             pass
 
+        # Load expectations.yaml if it exists (unified expectation suite, ADR-005)
+        expectations_file = dir_path / "expectations.yaml"
+        try:
+            with expectations_file.open() as f:
+                expectations_data = self.yaml.load(f) or {}
+            if expectations_data:
+                umf_data["expectations"] = expectations_data
+        except FileNotFoundError:
+            pass
+
         # Load and merge columns from columns/ directory
         columns_dir = dir_path / "columns"
         if not columns_dir.is_dir():
@@ -437,12 +455,27 @@ class UMFLoader:
                 columns.append(col)
 
                 # Extract and merge column-specific validations
-                if "validations" in column_data:
-                    if "validation_rules" not in umf_data:
-                        umf_data["validation_rules"] = {}
-                    if "expectations" not in umf_data["validation_rules"]:
-                        umf_data["validation_rules"]["expectations"] = []
-                    if isinstance(column_data["validations"], list):
+                if "validations" in column_data and isinstance(
+                    column_data["validations"], list
+                ):
+                    # When expectations.yaml is loaded (new format), merge column
+                    # validations directly into the expectations suite via migration.
+                    if "expectations" in umf_data:
+                        from tablespec.models.umf import Expectation
+
+                        if "expectations" not in umf_data["expectations"]:
+                            umf_data["expectations"]["expectations"] = []
+                        for exp_dict in column_data["validations"]:
+                            migrated = Expectation.from_gx_dict(exp_dict).model_dump(
+                                exclude_none=True
+                            )
+                            umf_data["expectations"]["expectations"].append(migrated)
+                    else:
+                        # Legacy path: merge into validation_rules for later migration
+                        if "validation_rules" not in umf_data:
+                            umf_data["validation_rules"] = {}
+                        if "expectations" not in umf_data["validation_rules"]:
+                            umf_data["validation_rules"]["expectations"] = []
                         umf_data["validation_rules"]["expectations"].extend(
                             column_data["validations"]
                         )
@@ -606,92 +639,137 @@ class UMFLoader:
 
         # Note: Validation rules are NOT saved in table.yaml
         # They are split between:
-        # - validation_rules.yaml (for cross-column rules)
-        # - columns/{column_name}.yaml (for column-specific rules)
+        # - expectations.yaml (cross-column expectations, ADR-005 unified format)
+        # - columns/{column_name}.yaml (column-specific expectations)
+        # Legacy: validation_rules.yaml + quality_checks.yaml (when no unified suite)
 
         self._write_yaml(dir_path / "table.yaml", table_data)
 
-        # 3. Save validation_rules.yaml (formerly cross_column_validations.yaml)
-        expectations_list: list[dict[str, Any]] = []
-        if umf.validation_rules:
+        # Build column-validation index for saving column-specific expectations
+        # alongside column definitions in columns/{name}.yaml.
+        col_validations_map: dict[str, list[dict[str, Any]]] = {}
 
-            def is_cross_column_validation(exp: dict) -> bool:
-                """Check if expectation is cross-column (not tied to a single column).
+        if umf.expectations and umf.expectations.expectations:
+            # --- ADR-005 unified format: write expectations.yaml ---
+            all_exps: list[dict[str, Any]] = [
+                exp.model_dump(exclude_none=True) for exp in umf.expectations.expectations
+            ]
 
-                A validation is cross-column if it doesn't have a 'column' kwarg,
-                or if 'column' is None, empty string, or '-'.
-                """
+            def _is_cross_column(exp: dict) -> bool:
                 column = exp.get("kwargs", {}).get("column")
                 return column is None or column in {"", "-"}
 
-            if hasattr(umf.validation_rules, "expectations") and umf.validation_rules.expectations:
-                expectations_list = umf.validation_rules.expectations
-            elif isinstance(umf.validation_rules, dict):
-                expectations_list = umf.validation_rules.get("expectations", [])
+            cross_exps = [e for e in all_exps if _is_cross_column(e)]
+            for e in all_exps:
+                if not _is_cross_column(e):
+                    col = e["kwargs"]["column"]
+                    col_validations_map.setdefault(col, []).append(e)
 
-            cross_validations = {
-                "expectations": [
-                    exp
-                    for exp in (expectations_list or [])
-                    if isinstance(exp, dict) and is_cross_column_validation(exp)
+            expectations_data: dict[str, Any] = {}
+            if cross_exps:
+                expectations_data["expectations"] = cross_exps
+            if umf.expectations.pending:
+                expectations_data["pending"] = [
+                    exp.model_dump(exclude_none=True) for exp in umf.expectations.pending
                 ]
-            }
-            if cross_validations["expectations"]:
-                self._write_yaml(dir_path / "validation_rules.yaml", cross_validations)
+            if umf.expectations.thresholds:
+                expectations_data["thresholds"] = umf.expectations.thresholds
+            if umf.expectations.alert_config:
+                expectations_data["alert_config"] = umf.expectations.alert_config
 
-            # Save pending_expectations if present
-            pending_expectations = []
-            if (
-                hasattr(umf.validation_rules, "pending_expectations")
-                and umf.validation_rules.pending_expectations
-            ):
-                pending_expectations = umf.validation_rules.pending_expectations
-            elif isinstance(umf.validation_rules, dict):
-                pending_expectations = umf.validation_rules.get("pending_expectations", [])
-
-            if pending_expectations:
-                pending_validations = {"pending_expectations": pending_expectations}
-                self._write_yaml(dir_path / "pending_validations.yaml", pending_validations)
-
-        # 3b. Save quality_checks.yaml (post-ingestion quality checks)
-        quality_checks = getattr(umf, "quality_checks", None)
-        if quality_checks:
-            quality_checks_data: dict[str, Any] = {}
-            if hasattr(quality_checks, "checks") and quality_checks.checks:
-                quality_checks_data["checks"] = [
-                    check.model_dump(exclude_none=True) if hasattr(check, "model_dump") else check
-                    for check in quality_checks.checks
-                ]
-            elif isinstance(quality_checks, dict) and quality_checks.get("checks"):
-                quality_checks_data["checks"] = quality_checks["checks"]
-
-            # Persist thresholds/alert_config if present
-            thresholds = (
-                getattr(quality_checks, "thresholds", None)
-                if hasattr(quality_checks, "thresholds")
-                else None
+            # Always write expectations.yaml when the unified suite exists,
+            # even if empty — it serves as a format marker for the loader.
+            self._write_yaml(
+                dir_path / "expectations.yaml",
+                expectations_data or {"expectations": []},
             )
-            if thresholds:
-                quality_checks_data["thresholds"] = (
-                    thresholds.model_dump(exclude_none=True)
-                    if hasattr(thresholds, "model_dump")
-                    else thresholds
-                )
+        else:
+            # --- Legacy format: validation_rules.yaml + quality_checks.yaml ---
+            expectations_list: list[dict[str, Any]] = []
+            if umf.validation_rules:
 
-            alert_config = (
-                getattr(quality_checks, "alert_config", None)
-                if hasattr(quality_checks, "alert_config")
-                else None
-            )
-            if alert_config:
-                quality_checks_data["alert_config"] = (
-                    alert_config.model_dump(exclude_none=True)
-                    if hasattr(alert_config, "model_dump")
-                    else alert_config
-                )
+                def is_cross_column_validation(exp: dict) -> bool:
+                    column = exp.get("kwargs", {}).get("column")
+                    return column is None or column in {"", "-"}
 
-            if quality_checks_data.get("checks"):
-                self._write_yaml(dir_path / "quality_checks.yaml", quality_checks_data)
+                if (
+                    hasattr(umf.validation_rules, "expectations")
+                    and umf.validation_rules.expectations
+                ):
+                    expectations_list = umf.validation_rules.expectations
+                elif isinstance(umf.validation_rules, dict):
+                    expectations_list = umf.validation_rules.get("expectations", [])
+
+                cross_validations = {
+                    "expectations": [
+                        exp
+                        for exp in (expectations_list or [])
+                        if isinstance(exp, dict) and is_cross_column_validation(exp)
+                    ]
+                }
+                if cross_validations["expectations"]:
+                    self._write_yaml(dir_path / "validation_rules.yaml", cross_validations)
+
+                # Build column validation map from legacy expectations
+                for exp in expectations_list or []:
+                    if isinstance(exp, dict) and not is_cross_column_validation(exp):
+                        col = exp.get("kwargs", {}).get("column")
+                        if col:
+                            col_validations_map.setdefault(col, []).append(exp)
+
+                # Save pending_expectations if present
+                pending_expectations = []
+                if (
+                    hasattr(umf.validation_rules, "pending_expectations")
+                    and umf.validation_rules.pending_expectations
+                ):
+                    pending_expectations = umf.validation_rules.pending_expectations
+                elif isinstance(umf.validation_rules, dict):
+                    pending_expectations = umf.validation_rules.get("pending_expectations", [])
+
+                if pending_expectations:
+                    pending_validations = {"pending_expectations": pending_expectations}
+                    self._write_yaml(dir_path / "pending_validations.yaml", pending_validations)
+
+            quality_checks = getattr(umf, "quality_checks", None)
+            if quality_checks:
+                quality_checks_data: dict[str, Any] = {}
+                if hasattr(quality_checks, "checks") and quality_checks.checks:
+                    quality_checks_data["checks"] = [
+                        check.model_dump(exclude_none=True)
+                        if hasattr(check, "model_dump")
+                        else check
+                        for check in quality_checks.checks
+                    ]
+                elif isinstance(quality_checks, dict) and quality_checks.get("checks"):
+                    quality_checks_data["checks"] = quality_checks["checks"]
+
+                thresholds = (
+                    getattr(quality_checks, "thresholds", None)
+                    if hasattr(quality_checks, "thresholds")
+                    else None
+                )
+                if thresholds:
+                    quality_checks_data["thresholds"] = (
+                        thresholds.model_dump(exclude_none=True)
+                        if hasattr(thresholds, "model_dump")
+                        else thresholds
+                    )
+
+                alert_config = (
+                    getattr(quality_checks, "alert_config", None)
+                    if hasattr(quality_checks, "alert_config")
+                    else None
+                )
+                if alert_config:
+                    quality_checks_data["alert_config"] = (
+                        alert_config.model_dump(exclude_none=True)
+                        if hasattr(alert_config, "model_dump")
+                        else alert_config
+                    )
+
+                if quality_checks_data.get("checks"):
+                    self._write_yaml(dir_path / "quality_checks.yaml", quality_checks_data)
 
         # 4. Save columns/ directory
         if umf.columns:
@@ -745,14 +823,8 @@ class UMFLoader:
                         col_data["derivation"] = mappings[col_name]
 
                 # Add column-specific validations
-                if umf.validation_rules:
-                    col_validations = [
-                        exp
-                        for exp in (expectations_list or [])
-                        if isinstance(exp, dict) and exp.get("kwargs", {}).get("column") == col_name
-                    ]
-                    if col_validations:
-                        col_data["validations"] = col_validations
+                if col_name in col_validations_map:
+                    col_data["validations"] = col_validations_map[col_name]
 
                 self._write_yaml(columns_dir / f"{col_name}.yaml", col_data)
 
