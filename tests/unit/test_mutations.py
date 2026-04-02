@@ -3,7 +3,14 @@
 import pytest
 
 from tests.builders import UMFBuilder
-from tablespec.authoring.mutations import add_column, modify_column, remove_column, rename_column
+from tablespec.authoring.mutations import (
+    add_column,
+    modify_column,
+    remove_column,
+    remove_expectation,
+    rename_column,
+)
+from tablespec.models.umf import UMF, Expectation, ExpectationMeta, ExpectationSuite
 
 pytestmark = [pytest.mark.fast, pytest.mark.no_spark]
 
@@ -89,3 +96,59 @@ class TestModifyColumn:
         result = modify_column(umf, "id", description="Primary key")
         assert umf.columns[0].description is None
         assert result.columns[0].description == "Primary key"
+
+
+class TestRemoveExpectation:
+    @staticmethod
+    def _umf_with_suite() -> UMF:
+        umf = UMFBuilder("t").column("id", "INTEGER").column("amount", "DECIMAL").build()
+        suite = ExpectationSuite(
+            expectations=[
+                Expectation(
+                    type="expect_column_values_to_not_be_null",
+                    kwargs={"column": "id"},
+                    meta=ExpectationMeta(stage="raw", severity="critical"),
+                ),
+                Expectation(
+                    type="expect_column_values_to_be_between",
+                    kwargs={"column": "amount", "min_value": 0},
+                    meta=ExpectationMeta(stage="ingested", severity="warning"),
+                ),
+                Expectation(
+                    type="expect_column_values_to_not_be_null",
+                    kwargs={"column": "amount"},
+                    meta=ExpectationMeta(stage="raw", severity="critical"),
+                ),
+            ],
+        )
+        return umf.model_copy(update={"expectations": suite})
+
+    def test_removes_matching_type_and_column(self):
+        umf = self._umf_with_suite()
+        result, count = remove_expectation(umf, "expect_column_values_to_not_be_null", "id")
+        assert count == 1
+        assert len(result.expectations.expectations) == 2
+
+    def test_removes_all_matching_type(self):
+        umf = self._umf_with_suite()
+        result, count = remove_expectation(umf, "expect_column_values_to_not_be_null")
+        assert count == 2
+        assert len(result.expectations.expectations) == 1
+        assert result.expectations.expectations[0].type == "expect_column_values_to_be_between"
+
+    def test_no_match_returns_original(self):
+        umf = self._umf_with_suite()
+        result, count = remove_expectation(umf, "expect_column_to_exist")
+        assert count == 0
+        assert result is umf
+
+    def test_updates_only_expectations_field(self):
+        """Verify remove_expectation mutates only umf.expectations, not legacy fields."""
+        umf = self._umf_with_suite()
+        result, count = remove_expectation(umf, "expect_column_values_to_be_between")
+        assert count == 1
+        # expectations field is updated
+        assert len(result.expectations.expectations) == 2
+        # legacy fields are untouched (None on the builder-produced UMF)
+        assert result.quality_checks is None
+        assert result.validation_rules is None

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from tablespec.expectation_migration import migrate_to_expectation_suite
-from tablespec.models.umf import QualityCheck, QualityChecks, UMF, UMFColumn, ValidationRules
+from tablespec.models.umf import UMF, UMFColumn
 
 
 def add_column(umf: UMF, name: str, data_type: str, **kwargs: Any) -> UMF:
@@ -72,41 +72,6 @@ def remove_expectation(umf: UMF, expectation_type: str, column: str | None = Non
 
     if removed:
         updates["expectations"] = suite.model_copy(update={"expectations": filtered_expectations})
-        raw_expectations = [exp.model_dump() for exp in filtered_expectations if exp.meta.stage != "ingested"]
-        ingested_checks = [
-            QualityCheck(
-                expectation=exp.model_dump(),
-                severity=exp.meta.severity,
-                blocking=exp.meta.blocking,
-                description=exp.meta.description,
-                tags=list(exp.meta.tags),
-            )
-            for exp in filtered_expectations
-            if exp.meta.stage == "ingested"
-        ]
-        updates["validation_rules"] = ValidationRules(
-            expectations=raw_expectations,
-            pending_expectations=[exp.model_dump() for exp in suite.pending],
-        )
-        updates["quality_checks"] = QualityChecks(
-            checks=ingested_checks,
-            thresholds=suite.thresholds,
-            alert_config=suite.alert_config,
-        )
-
-    # Keep legacy containers aligned until split-format saving writes the unified suite.
-    if umf.validation_rules and umf.validation_rules.expectations:
-        original = umf.validation_rules.expectations
-        filtered = [e for e in original if not _matches(e)]
-        new_vr = umf.validation_rules.model_copy(update={"expectations": filtered})
-        updates["validation_rules"] = new_vr
-
-    # Keep legacy containers aligned until split-format saving writes the unified suite.
-    if umf.quality_checks and umf.quality_checks.checks:
-        original_checks = umf.quality_checks.checks
-        filtered_checks = [c for c in original_checks if not _matches(c.expectation)]
-        new_qc = umf.quality_checks.model_copy(update={"checks": filtered_checks})
-        updates["quality_checks"] = new_qc
 
     return umf.model_copy(update=updates) if updates else umf, removed
 

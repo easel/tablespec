@@ -181,10 +181,10 @@ if _HAS_VALIDATOR:
                     console.print(f"    [cyan]Columns:[/cyan] {len(umf.columns)}")
                     if umf.file_format and umf.file_format.filename_pattern:
                         console.print("    [cyan]Filename pattern:[/cyan] Valid")
-                    if umf.validation_rules and umf.validation_rules.expectations:
+                    if umf.expectations and umf.expectations.expectations:
                         console.print(
                             f"    [cyan]Expectations:[/cyan] "
-                            f"{len(umf.validation_rules.expectations)}"
+                            f"{len(umf.expectations.expectations)}"
                         )
                     if umf.relationships and umf.relationships.foreign_keys:
                         console.print(
@@ -278,8 +278,8 @@ if _HAS_VALIDATOR:
                 console.print(f"  [dim]... and {len(umf.columns) - 10} more[/dim]")
 
             # Validation summary
-            if umf.validation_rules and umf.validation_rules.expectations:
-                exp_count = len(umf.validation_rules.expectations)
+            if umf.expectations and umf.expectations.expectations:
+                exp_count = len(umf.expectations.expectations)
                 console.print(f"\n[bold cyan]Validation:[/bold cyan] {exp_count} expectations")
 
             # Relationships
@@ -1033,7 +1033,7 @@ def validation_remove(
 ) -> None:
     """Remove expectations matching a type and optional column.
 
-    Searches both validation_rules and quality_checks.
+    Searches the unified expectations suite.
 
     Examples:
       tablespec validation-remove tables/claims/ --type expect_column_values_to_match_regex --column ssn

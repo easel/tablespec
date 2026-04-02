@@ -73,7 +73,7 @@ class TestValidationRemove:
         assert "1 expectation" in result.output
 
         data = _load_umf(umf_file)
-        exps = data["validation_rules"]["expectations"]
+        exps = data["expectations"]["expectations"]
         assert len(exps) == 2
         # The regex on "name" should be gone, regex on "id" should remain
         regex_cols = [e["kwargs"]["column"] for e in exps if "regex" in e["type"]]
@@ -95,7 +95,7 @@ class TestValidationRemove:
         assert "2 expectation" in result.output
 
         data = _load_umf(umf_file)
-        exps = data["validation_rules"]["expectations"]
+        exps = data["expectations"]["expectations"]
         assert len(exps) == 1
         assert exps[0]["type"] == "expect_column_values_to_not_be_null"
 
@@ -121,19 +121,27 @@ class TestRemoveExpectationFunction:
         from tests.builders import UMFBuilder
 
         from tablespec.authoring.mutations import remove_expectation
-        from tablespec.models.umf import ValidationRules
+        from tablespec.models.umf import Expectation, ExpectationMeta, ExpectationSuite
 
         umf = UMFBuilder("test").column("id", "INTEGER").column("name", "VARCHAR").build()
-        vr = ValidationRules(
+        suite = ExpectationSuite(
             expectations=[
-                {"type": "expect_column_values_to_not_be_null", "kwargs": {"column": "id"}},
-                {"type": "expect_column_values_to_match_regex", "kwargs": {"column": "name", "regex": ".*"}},
+                Expectation(
+                    type="expect_column_values_to_not_be_null",
+                    kwargs={"column": "id"},
+                    meta=ExpectationMeta(stage="raw", severity="critical"),
+                ),
+                Expectation(
+                    type="expect_column_values_to_match_regex",
+                    kwargs={"column": "name", "regex": ".*"},
+                    meta=ExpectationMeta(stage="raw", severity="warning"),
+                ),
             ]
         )
-        umf = umf.model_copy(update={"validation_rules": vr})
+        umf = umf.model_copy(update={"expectations": suite})
         updated, count = remove_expectation(umf, "expect_column_values_to_not_be_null", "id")
         assert count == 1
-        assert len(updated.validation_rules.expectations) == 1
+        assert len(updated.expectations.expectations) == 1
 
     def test_remove_returns_zero_when_no_match(self) -> None:
         from tests.builders import UMFBuilder
