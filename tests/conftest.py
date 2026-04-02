@@ -224,3 +224,200 @@ class FixtureDataLoader:
 def fixture_loader():
     """Provide access to the fixture data loader."""
     return FixtureDataLoader
+
+
+# ---------------------------------------------------------------------------
+# GX Test Harness (FEAT-016)
+# ---------------------------------------------------------------------------
+
+class GXTestResult:
+    """Structured result from running GX expectations via the test harness.
+
+    Attributes:
+        all_passed: True if every expectation succeeded.
+        results: Mapping from (expectation_type, column) to ExpectationResult.
+        raw: The underlying SuiteExecutionResult.
+    """
+
+    def __init__(self, suite_result: Any) -> None:
+        from tablespec.validation.gx_executor import SuiteExecutionResult
+
+        self.raw: SuiteExecutionResult = suite_result
+        self.all_passed: bool = suite_result.success
+        self.total: int = suite_result.total
+        self.passed: int = suite_result.passed
+        self.failed: int = suite_result.failed
+        self._index: dict[tuple[str, str | None], Any] = {}
+        for r in suite_result.results:
+            self._index[(r.expectation_type, r.column)] = r
+
+    def __getitem__(self, key: str) -> Any:
+        """Look up results by expectation type.
+
+        Returns a namespace where attribute access yields column-keyed results:
+            result["expect_column_to_exist"]["col_name"].success
+
+        For table-level expectations (no column), use None:
+            result["expect_table_row_count_to_equal"][None].success
+        """
+        matches = {col: r for (etype, col), r in self._index.items() if etype == key}
+        if not matches:
+            available = sorted({etype for etype, _ in self._index})
+            raise KeyError(f"No results for '{key}'. Available: {available}")
+        return _ColumnResults(matches)
+
+    @property
+    def failures(self) -> list[Any]:
+        """Return all failed ExpectationResults."""
+        return [r for r in self.raw.results if not r.success]
+
+
+class _ColumnResults:
+    """Accessor for per-column results within an expectation type."""
+
+    def __init__(self, results: dict[str | None, Any]) -> None:
+        self._results = results
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if name not in self._results:
+            available = sorted(str(k) for k in self._results)
+            raise AttributeError(
+                f"No result for column '{name}'. Available: {available}"
+            )
+        return self._results[name]
+
+    def __getitem__(self, key: str | None) -> Any:
+        if key not in self._results:
+            available = sorted(str(k) for k in self._results)
+            raise KeyError(
+                f"No result for column '{key}'. Available: {available}"
+            )
+        return self._results[key]
+
+
+class GXTestHarness:
+    """Thin wrapper around GXSuiteExecutor for test ergonomics.
+
+    Creates a Sail-backed SparkSession and provides a simple ``run()``
+    method that accepts expectation dicts and test data.
+
+    Usage::
+
+        harness = GXTestHarness()  # auto-detects Sail or Spark
+        result = harness.run(
+            expectations=[{"type": "expect_column_to_exist", "kwargs": {"column": "id"}}],
+            data=[{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}],
+        )
+        assert result.all_passed
+        assert result["expect_column_to_exist"]["id"].success
+    """
+
+    def __init__(self, backend: str = "auto") -> None:
+        if backend == "auto":
+            try:
+                import pysail  # noqa: F401
+                backend = "sail"
+            except ImportError:
+                backend = "spark"
+        self._backend = backend
+        self._spark: Any | None = None
+        self._sail_server: Any | None = None
+
+    def _get_spark(self) -> Any:
+        if self._spark is not None:
+            return self._spark
+
+        if self._backend == "sail":
+            try:
+                from pysail.spark import SparkConnectServer
+                from pyspark.sql import SparkSession
+
+                self._sail_server = SparkConnectServer()
+                self._sail_server.start()
+                _, port = self._sail_server.listening_address
+                self._spark = (
+                    SparkSession.builder.remote(f"sc://localhost:{port}")
+                    .appName("gx-test-harness")
+                    .getOrCreate()
+                )
+            except ImportError:
+                pytest.skip("Sail not available — install with: uv sync --extra lite")
+            except Exception as e:
+                pytest.skip(f"Sail session failed: {e}")
+        elif self._backend == "spark":
+            from tablespec.session import get_session
+
+            try:
+                self._spark = get_session("gx-test-harness", backend="spark")
+            except Exception as e:
+                pytest.skip(f"Spark session failed: {e}")
+        else:
+            raise ValueError(f"Unknown backend: {self._backend}")
+
+        return self._spark
+
+    def run(
+        self,
+        expectations: list[dict[str, Any]],
+        data: list[dict[str, Any]] | None = None,
+        data_path: str | None = None,
+    ) -> GXTestResult:
+        """Execute expectations against test data.
+
+        Args:
+            expectations: List of GX expectation dicts.
+            data: Inline test data as list of row dicts.
+            data_path: Path to a CSV file to load as test data.
+
+        Returns:
+            GXTestResult with indexed results.
+        """
+        from tablespec.validation.gx_executor import GXSuiteExecutor
+
+        spark = self._get_spark()
+
+        if data is not None:
+            df = spark.createDataFrame(data)
+        elif data_path is not None:
+            df = spark.read.csv(data_path, header=True, inferSchema=True)
+        else:
+            raise ValueError("Provide either data= or data_path=")
+
+        executor = GXSuiteExecutor(spark=spark)
+        suite_result = executor.execute_suite(df, expectations)
+        return GXTestResult(suite_result)
+
+    def stop(self) -> None:
+        """Shut down the session and server."""
+        if self._spark is not None:
+            try:
+                self._spark.stop()
+            except Exception:
+                pass
+            self._spark = None
+        if self._sail_server is not None:
+            try:
+                self._sail_server.stop()
+            except Exception:
+                pass
+            self._sail_server = None
+
+
+@pytest.fixture(scope="session")
+def gx_harness():
+    """Session-scoped GXTestHarness with auto-detected backend.
+
+    Usage in tests::
+
+        def test_column_exists(gx_harness):
+            result = gx_harness.run(
+                expectations=[{"type": "expect_column_to_exist", "kwargs": {"column": "id"}}],
+                data=[{"id": 1}],
+            )
+            assert result.all_passed
+    """
+    harness = GXTestHarness()
+    yield harness
+    harness.stop()

@@ -11,7 +11,7 @@ Foundational testing infrastructure enabling fast iteration, property-based test
 
 ### GX Test Harness (`tests/conftest.py`)
 
-Execute GX expectations against DuckDB (per ADR-006) or Pandas fallback for sub-second test feedback. Wraps GX context/datasource/validator setup behind a simple API.
+Execute GX expectations against Spark or Sail backends. Wraps GX context/datasource/validator setup behind a simple API.
 
 Returns structured `GXTestResult` objects with:
 - Pass/fail status per expectation
@@ -20,7 +20,7 @@ Returns structured `GXTestResult` objects with:
 - Sample unexpected values
 
 ```python
-harness = GXTestHarness(backend="duckdb")  # or "pandas"
+harness = GXTestHarness(backend="sail")  # or "spark"
 result = harness.run(expectations, data_path="test.csv", stage="raw")
 assert result.all_passed
 assert result["expect_column_to_exist"]["column_name"].success
@@ -84,5 +84,4 @@ For new features: write test file first with `@pytest.mark.xfail` tests as the e
 
 ## Dependencies
 
-- ADR-006 (DuckDB backend for GX harness)
-- `duckdb`, `duckdb-engine` as test dependencies (or `tablespec[duckdb]`)
+- `tablespec[lite]` (Sail backend) or `tablespec[spark]` (Spark backend) for GX harness
