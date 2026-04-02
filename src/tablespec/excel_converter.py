@@ -416,7 +416,7 @@ class UMFToExcelConverter:
         self._create_columns_sheet(umf)
         self._create_survivorship_sheet(umf)
 
-        if umf.validation_rules:
+        if (umf.expectations and umf.expectations.expectations) or umf.validation_rules:
             self._create_validation_sheet(umf)
 
         if umf.relationships:
@@ -899,6 +899,15 @@ class UMFToExcelConverter:
         ws.column_dimensions["H"].width = 30  # Source
         ws.column_dimensions["I"].width = 100  # Explanation/Reason (very wide for readability)
 
+    @staticmethod
+    def _get_expectation_dicts_for_export(umf: "UMF") -> list[dict[str, Any]]:
+        """Get expectation dicts for Excel export, preferring ExpectationSuite."""
+        if umf.expectations and umf.expectations.expectations:
+            return [exp.to_gx_dict() for exp in umf.expectations.expectations]
+        if umf.validation_rules and umf.validation_rules.expectations:
+            return umf.validation_rules.expectations
+        return []
+
     def _prepare_validation_expectations_with_index(
         self, expectations: list[dict[str, Any]]
     ) -> tuple[list[tuple[str, str, str, int, dict[str, Any]]], list[str]]:
@@ -1026,9 +1035,10 @@ class UMFToExcelConverter:
         ]
         self._add_header_row(ws, headers)
 
-        if umf.validation_rules and umf.validation_rules.expectations:
+        exp_list = self._get_expectation_dicts_for_export(umf)
+        if exp_list:
             expectations_with_index, _ = self._prepare_validation_expectations_with_index(
-                umf.validation_rules.expectations
+                exp_list
             )
 
             default_font = self._get_default_font()

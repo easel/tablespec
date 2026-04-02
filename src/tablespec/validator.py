@@ -38,6 +38,15 @@ except ImportError:
 _UMF_JSON_SCHEMA: dict[str, Any] = UMF.model_json_schema()
 
 
+def _get_expectation_dicts(umf: UMF) -> list[dict[str, Any]]:
+    """Get expectation dicts from ExpectationSuite, falling back to legacy fields."""
+    if umf.expectations and umf.expectations.expectations:
+        return [exp.to_gx_dict() for exp in umf.expectations.expectations]
+    if umf.validation_rules and umf.validation_rules.expectations:
+        return umf.validation_rules.expectations
+    return []
+
+
 @dataclass
 class ValidationContext:
     """Context for validation operations with process-lifetime UMF caching.
@@ -183,7 +192,8 @@ def validate_table(
                 table_names.update(a.lower() for a in t.aliases)
 
         # 5. Validate expectations if present
-        if umf.validation_rules and umf.validation_rules.expectations:
+        exp_dicts = _get_expectation_dicts(umf)
+        if exp_dicts:
             # Validate expectation configuration through the consolidated GX executor.
             gx_executor = None
             if GXSuiteExecutor is not None:
@@ -194,7 +204,7 @@ def validate_table(
 
             column_names = {col.name for col in umf.columns}
 
-            for i, exp in enumerate(umf.validation_rules.expectations):
+            for i, exp in enumerate(exp_dicts):
                 exp_type = exp.get("type")
                 if not exp_type:
                     errors.append(f"Expectation {i}: Missing 'type' field")
@@ -398,10 +408,8 @@ def show_table_info(
             ],
         },
         "validation": {
-            "has_rules": bool(umf.validation_rules and umf.validation_rules.expectations),
-            "expectation_count": len(umf.validation_rules.expectations)
-            if umf.validation_rules and umf.validation_rules.expectations
-            else 0,
+            "has_rules": bool(_get_expectation_dicts(umf)),
+            "expectation_count": len(_get_expectation_dicts(umf)),
         },
         "relationships": {
             "foreign_keys": len(umf.relationships.foreign_keys or []) if umf.relationships else 0,

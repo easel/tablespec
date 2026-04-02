@@ -334,12 +334,14 @@ class UMFDiff:
             List of expectation dicts
 
         """
+        # Prefer unified ExpectationSuite (ADR-005)
+        if umf.expectations and umf.expectations.expectations:
+            return [exp.to_gx_dict() for exp in umf.expectations.expectations]
+        # Fallback to legacy validation_rules
         if not umf.validation_rules:
             return []
-        # Support expectations attribute (used in pulseflow UMF format)
         if hasattr(umf.validation_rules, "expectations"):
             return list(getattr(umf.validation_rules, "expectations", None) or [])
-        # Support dict-based validation_rules
         if isinstance(umf.validation_rules, dict):
             return umf.validation_rules.get("expectations", [])
         return []
