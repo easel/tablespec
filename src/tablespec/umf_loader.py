@@ -458,6 +458,13 @@ class UMFLoader:
         # Convert all YAML string types to plain Python str for Spark compatibility
         umf_data = self._convert_yaml_to_plain_strings(umf_data)
 
+        if "expectations" not in umf_data and (
+            "validation_rules" in umf_data or "quality_checks" in umf_data
+        ):
+            from tablespec.expectation_migration import ensure_expectation_suite_data
+
+            umf_data["expectations"] = ensure_expectation_suite_data(umf_data)
+
         # Create UMF model
         umf = UMF(**umf_data)
         if hasattr(umf, "mtime"):

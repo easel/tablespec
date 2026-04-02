@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from tablespec.models.umf import UMF, UMFColumn
+from tablespec.expectation_migration import migrate_to_expectation_suite
+from tablespec.models.umf import QualityCheck, QualityChecks, UMF, UMFColumn, ValidationRules
 
 
 def add_column(umf: UMF, name: str, data_type: str, **kwargs: Any) -> UMF:
@@ -48,32 +49,62 @@ def modify_column(umf: UMF, name: str, **changes: Any) -> UMF:
 
 def remove_expectation(umf: UMF, expectation_type: str, column: str | None = None) -> tuple[UMF, int]:
     """Remove expectations matching type and optional column. Returns (new_umf, count_removed)."""
-    removed = 0
-
-    def _matches(exp: dict[str, Any]) -> bool:
-        exp_type = exp.get("type", exp.get("expectation_type", ""))
-        exp_col = exp.get("kwargs", {}).get("column")
+    def _matches(exp: dict[str, Any] | Any) -> bool:
+        if isinstance(exp, dict):
+            exp_type = exp.get("type", exp.get("expectation_type", ""))
+            exp_col = exp.get("kwargs", {}).get("column")
+        else:
+            exp_type = getattr(exp, "type", "")
+            exp_col = getattr(exp, "kwargs", {}).get("column")
         if exp_type != expectation_type:
             return False
         if column is not None and exp_col != column:
             return False
         return True
 
+    removed = 0
     updates: dict[str, Any] = {}
+    suite = umf.expectations or migrate_to_expectation_suite(umf.model_dump(exclude_none=True))
 
-    # Filter validation_rules.expectations
+    original_expectations = list(suite.expectations)
+    filtered_expectations = [exp for exp in original_expectations if not _matches(exp)]
+    removed = len(original_expectations) - len(filtered_expectations)
+
+    if removed:
+        updates["expectations"] = suite.model_copy(update={"expectations": filtered_expectations})
+        raw_expectations = [exp.model_dump() for exp in filtered_expectations if exp.meta.stage != "ingested"]
+        ingested_checks = [
+            QualityCheck(
+                expectation=exp.model_dump(),
+                severity=exp.meta.severity,
+                blocking=exp.meta.blocking,
+                description=exp.meta.description,
+                tags=list(exp.meta.tags),
+            )
+            for exp in filtered_expectations
+            if exp.meta.stage == "ingested"
+        ]
+        updates["validation_rules"] = ValidationRules(
+            expectations=raw_expectations,
+            pending_expectations=[exp.model_dump() for exp in suite.pending],
+        )
+        updates["quality_checks"] = QualityChecks(
+            checks=ingested_checks,
+            thresholds=suite.thresholds,
+            alert_config=suite.alert_config,
+        )
+
+    # Keep legacy containers aligned until split-format saving writes the unified suite.
     if umf.validation_rules and umf.validation_rules.expectations:
         original = umf.validation_rules.expectations
         filtered = [e for e in original if not _matches(e)]
-        removed += len(original) - len(filtered)
         new_vr = umf.validation_rules.model_copy(update={"expectations": filtered})
         updates["validation_rules"] = new_vr
 
-    # Filter quality_checks.checks
+    # Keep legacy containers aligned until split-format saving writes the unified suite.
     if umf.quality_checks and umf.quality_checks.checks:
         original_checks = umf.quality_checks.checks
         filtered_checks = [c for c in original_checks if not _matches(c.expectation)]
-        removed += len(original_checks) - len(filtered_checks)
         new_qc = umf.quality_checks.model_copy(update={"checks": filtered_checks})
         updates["quality_checks"] = new_qc
 

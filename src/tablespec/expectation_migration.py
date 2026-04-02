@@ -66,6 +66,16 @@ def migrate_to_expectation_suite(umf_data: dict[str, Any]) -> ExpectationSuite:
     )
 
 
+def ensure_expectation_suite_data(umf_data: dict[str, Any]) -> dict[str, Any]:
+    """Return unified expectation-suite data, migrating legacy fields when needed."""
+    suite = umf_data.get("expectations")
+    if isinstance(suite, dict):
+        return suite
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        return migrate_to_expectation_suite(umf_data).model_dump(exclude_none=True)
+
+
 def _migrate_expectation(
     exp_dict: dict[str, Any],
     default_stage: str = "raw",

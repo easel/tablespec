@@ -674,6 +674,9 @@ class TestLoadColumnCentricEdgeCases:
         loader = UMFLoader()
         umf = loader.load(tmp_path)
         assert umf.quality_checks is not None
+        assert umf.expectations is not None
+        assert len(umf.expectations.expectations) == 1
+        assert umf.expectations.expectations[0].meta.severity == "critical"
 
     def test_load_with_cross_column_validations_deprecated(self, tmp_path):
         """Test loading with deprecated cross_column_validations.yaml emits warning."""

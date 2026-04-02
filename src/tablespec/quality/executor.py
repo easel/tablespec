@@ -15,11 +15,6 @@ from typing import TYPE_CHECKING, Any
 import uuid
 
 try:
-    from tablespec.gx_wrapper import get_gx_wrapper
-except ImportError:
-    get_gx_wrapper = None  # type: ignore[assignment]
-
-try:
     from tablespec.models.quality import (
         QualityCheckResult,
         QualityCheckRun,
@@ -37,6 +32,7 @@ try:
 except ImportError:
     PipelineDiscovery = None  # type: ignore[assignment, misc]
 
+from tablespec.expectation_migration import migrate_to_expectation_suite
 from tablespec.umf_loader import UMFLoader
 
 try:
@@ -114,11 +110,11 @@ class QualityCheckExecutor:
         self.baseline = baseline
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        # Check GX availability through wrapper
+        # Set up GXSuiteExecutor (batch execution) as primary engine
         try:
-            if get_gx_wrapper is None:
-                raise ImportError("gx_wrapper module not available")
-            self.gx_wrapper = get_gx_wrapper()
+            from tablespec.validation.gx_executor import GXSuiteExecutor
+
+            self.executor = GXSuiteExecutor(spark=spark)
             self.gx_available = True
 
             # Suppress GX internal loggers (noisy INFO messages)
@@ -128,11 +124,11 @@ class QualityCheckExecutor:
                 logging.WARNING
             )
 
-            self.logger.info("Great Expectations available via GXWrapper")
+            self.logger.info("Great Expectations available via GXSuiteExecutor")
         except ImportError as e:
             self.logger.warning(f"Great Expectations not available: {e}")
             self.gx_available = False
-            self.gx_wrapper = None
+            self.executor = None  # type: ignore[assignment]
 
     def execute_quality_checks(
         self,
@@ -204,14 +200,25 @@ class QualityCheckExecutor:
                     validated_records=0,
                 )
 
-        # Extract quality checks from UMF using typed attributes
-        quality_checks_config = umf.quality_checks
+        # Extract ingested-stage checks from the unified expectation suite.
+        suite = umf.expectations or migrate_to_expectation_suite(umf.model_dump(exclude_none=True))
         configured_checks: list[QualityCheck] = []
         thresholds_dict: dict[str, Any] | None = None
 
-        if quality_checks_config:
-            configured_checks = quality_checks_config.checks or []
-            thresholds_dict = quality_checks_config.thresholds
+        if suite:
+            from tablespec.models.umf import QualityCheck as QualityCheckModel
+
+            configured_checks = [
+                QualityCheckModel(
+                    expectation=exp.model_dump(),
+                    severity=exp.meta.severity,
+                    blocking=exp.meta.blocking,
+                    description=exp.meta.description,
+                    tags=list(exp.meta.tags),
+                )
+                for exp in suite.ingested
+            ]
+            thresholds_dict = suite.thresholds
 
         # Add default checks (row count change) unless already configured
         checks = self._merge_with_defaults(configured_checks)
@@ -260,14 +267,13 @@ class QualityCheckExecutor:
                 validated_records=validated_records,
             )
 
-        # Execute each quality check, skipping pending implementations and user-disabled rules
-        results: list[QualityCheckResult] = []
+        # Filter checks: skip disabled and pending, enrich run-comparison kwargs
+        executable_checks: list[QualityCheck] = []
         for check in checks:
             expectation = check.expectation or {}
             meta = expectation.get("meta", {})
             exp_type = expectation.get("type") or expectation.get("expectation_type")
 
-            # Skip user-disabled expectations (severity="skip" in meta)
             if meta.get("severity") == "skip":
                 skip_reason = meta.get("skip_reason", "User disabled")
                 self.logger.info(
@@ -275,7 +281,6 @@ class QualityCheckExecutor:
                 )
                 continue
 
-            # Skip pending expectations - they're placeholders for unimplemented validation rules
             if exp_type == "expect_validation_rule_pending_implementation":
                 self.logger.debug(
                     f"Skipping pending expectation for {table_name}: "
@@ -283,8 +288,11 @@ class QualityCheckExecutor:
                 )
                 continue
 
-            result = self._execute_single_check(spark_df, table_name, check)
-            results.append(result)
+            executable_checks.append(check)
+
+        # Build expectation dicts and execute in one batch via GXSuiteExecutor
+        results: list[QualityCheckResult] = []
+        results = self._execute_batch(spark_df, table_name, executable_checks)
 
         # Calculate quality score
         score = self._calculate_quality_score(results)
@@ -312,90 +320,114 @@ class QualityCheckExecutor:
             validated_records=validated_records,
         )
 
-    def _execute_single_check(
-        self, spark_df: DataFrame, table_name: str, check: QualityCheck
-    ) -> QualityCheckResult:
-        """Execute a single quality check using Great Expectations.
+    def _execute_batch(
+        self,
+        spark_df: DataFrame,
+        table_name: str,
+        checks: list[QualityCheck],
+    ) -> list[QualityCheckResult]:
+        """Execute quality checks as a single batch via GXSuiteExecutor.
+
+        Preserves check↔result correspondence by position: the i-th expectation
+        result maps to the i-th check in the input list.
 
         Args:
-            spark_df: PySpark DataFrame to check
-            table_name: Name of the table being checked
-            check: QualityCheck model with expectation, severity, blocking, etc.
+            spark_df: PySpark DataFrame to validate.
+            table_name: Name of the table being validated.
+            checks: Filtered list of executable quality checks.
 
         Returns:
-            QualityCheckResult with execution details
-
+            List of QualityCheckResult, one per input check.
         """
-        expectation_type, kwargs, column_name, check_id, tags = self._extract_check_metadata(check)
-        severity = check.severity
-        blocking = check.blocking
-        description = check.description
+        if not checks:
+            return []
 
-        # Enrich kwargs with baseline data for run comparison expectations
-        if is_run_comparison_expectation(expectation_type):
-            kwargs = self._enrich_with_baseline(expectation_type, kwargs, column_name)
+        # Build parallel lists: expectations (for GX) and metadata (for result mapping)
+        expectations: list[dict[str, Any]] = []
+        check_meta: list[tuple[str, str | None, str, list[str], str, bool, str | None]] = []
+
+        for check in checks:
+            expectation_type, kwargs, column_name, check_id, tags = self._extract_check_metadata(check)
+
+            # Enrich kwargs with baseline data for run comparison expectations
+            if is_run_comparison_expectation(expectation_type):
+                kwargs = self._enrich_with_baseline(expectation_type, kwargs, column_name)
+
+            expectation = check.expectation or {}
+            meta = expectation.get("meta", {})
+            expectations.append({
+                "type": expectation_type,
+                "kwargs": kwargs,
+                "meta": meta,
+            })
+            check_meta.append((
+                expectation_type,
+                column_name,
+                check_id,
+                tags,
+                check.severity,
+                check.blocking,
+                check.description,
+            ))
 
         try:
-            # Execute expectation using GX wrapper
-            gx_result = self.gx_wrapper.execute_expectation(
-                spark_df,
-                expectation_type=expectation_type,
-                **kwargs,
-                result_format="COMPLETE",
-            )
+            suite_result = self.executor.execute_suite(spark_df, expectations)
+        except Exception as e:
+            self.logger.exception(f"Batch execution failed for {table_name}: {e}")
+            # Return failed results for all checks
+            return [
+                QualityCheckResult(
+                    check_id=cm[2],
+                    expectation_type=cm[0],
+                    column_name=cm[1],
+                    success=False,
+                    severity=cm[4],
+                    blocking=cm[5],
+                    description=cm[6],
+                    details={"error": str(e), "error_type": type(e).__name__},
+                    tags=cm[3],
+                )
+                for cm in check_meta
+            ]
 
-            success = gx_result.get("success", False)
+        # Map suite results back to QualityCheckResult by position
+        results: list[QualityCheckResult] = []
+        for i, (exp_type, col_name, check_id, tags, severity, blocking, description) in enumerate(check_meta):
+            if i < len(suite_result.results):
+                er = suite_result.results[i]
+                results.append(
+                    QualityCheckResult(
+                        check_id=check_id,
+                        expectation_type=exp_type,
+                        column_name=col_name,
+                        success=er.success,
+                        severity=severity,
+                        blocking=blocking,
+                        description=description,
+                        unexpected_count=er.unexpected_count,
+                        unexpected_percent=er.details.get("unexpected_percent"),
+                        observed_value=er.observed_value,
+                        details=er.details,
+                        tags=tags,
+                    )
+                )
+            else:
+                # Defensive: result not returned (shouldn't happen)
+                results.append(
+                    QualityCheckResult(
+                        check_id=check_id,
+                        expectation_type=exp_type,
+                        column_name=col_name,
+                        success=False,
+                        severity=severity,
+                        blocking=blocking,
+                        description=description,
+                        details={"error": "No result returned from GX suite execution"},
+                        tags=tags,
+                    )
+                )
 
-            # Extract metrics from GX result
-            result_dict = gx_result.get("result", {})
-            unexpected_count = result_dict.get("unexpected_count")
-            unexpected_percent = result_dict.get("unexpected_percent")
-            observed_value = result_dict.get("observed_value")
-
-            return QualityCheckResult(
-                check_id=check_id,
-                expectation_type=expectation_type,
-                column_name=column_name,
-                success=success,
-                severity=severity,
-                blocking=blocking,
-                description=description,
-                unexpected_count=unexpected_count,
-                unexpected_percent=unexpected_percent,
-                observed_value=observed_value,
-                details={"gx_result": gx_result},
-                tags=tags,
-            )
-
-        except GreatExpectationsError as e:
-            self.logger.exception(
-                f"GX error executing quality check {check_id} on {table_name}: {e}"
-            )
-            # Return failed result with error details
-            return QualityCheckResult(
-                check_id=check_id,
-                expectation_type=expectation_type,
-                column_name=column_name,
-                success=False,
-                severity=severity,
-                blocking=blocking,
-                description=description,
-                details={"error": str(e), "error_type": "GreatExpectationsError"},
-                tags=tags,
-            )
-        except (KeyError, TypeError, ValueError) as e:
-            self.logger.exception(f"Data error in quality check {check_id} on {table_name}: {e}")
-            return QualityCheckResult(
-                check_id=check_id,
-                expectation_type=expectation_type,
-                column_name=column_name,
-                success=False,
-                severity=severity,
-                blocking=blocking,
-                description=description,
-                details={"error": str(e), "error_type": type(e).__name__},
-                tags=tags,
-            )
+        return results
 
     def _extract_check_metadata(
         self, check: QualityCheck

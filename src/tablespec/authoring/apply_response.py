@@ -11,6 +11,7 @@ from tablespec.models.umf import (
     UMF,
     classify_validation_type,
 )
+from tablespec.expectation_migration import migrate_to_expectation_suite
 
 
 @dataclass
@@ -42,14 +43,14 @@ def apply_validation_response(
 
     # Get existing expectations for dedup
     existing_signatures: set[str] = set()
-    if umf.validation_rules and umf.validation_rules.expectations:
-        for exp in umf.validation_rules.expectations:
-            sig = _expectation_signature(exp)
-            existing_signatures.add(sig)
-    if umf.quality_checks and umf.quality_checks.checks:
-        for check in umf.quality_checks.checks:
-            sig = _expectation_signature(check.expectation)
-            existing_signatures.add(sig)
+    suite = umf.expectations or migrate_to_expectation_suite(umf.model_dump(exclude_none=True))
+    for exp in suite.expectations:
+        sig = _expectation_signature(exp)
+        existing_signatures.add(sig)
+
+    for exp in suite.pending:
+        sig = _expectation_signature(exp)
+        existing_signatures.add(sig)
 
     for exp_dict in response:
         exp_type = exp_dict.get("type", exp_dict.get("expectation_type", ""))

@@ -1114,9 +1114,11 @@ def preview(
     baseline = gen.generate_baseline_expectations(umf_data)
 
     # Merge baseline into a temporary copy for preview
-    all_exps = list(umf_data.get("validation_rules", {}).get("expectations", []))
+    suite_data = dict(umf_data.get("expectations") or {})
+    all_exps = list(suite_data.get("expectations", []))
     all_exps.extend(baseline)
-    preview_data = {**umf_data, "validation_rules": {"expectations": all_exps}}
+    suite_data["expectations"] = all_exps
+    preview_data = {**umf_data, "expectations": suite_data}
 
     result = generate_preview(preview_data)
 

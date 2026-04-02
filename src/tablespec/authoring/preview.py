@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from tablespec.expectation_migration import ensure_expectation_suite_data
 from tablespec.models.umf import classify_validation_type, REDUNDANT_VALIDATION_TYPES
 
 
@@ -37,28 +38,23 @@ class PreviewResult:
 def generate_preview(umf_data: dict[str, Any]) -> PreviewResult:
     """Classify all expectations in a UMF by stage.
 
-    Collects from validation_rules.expectations and quality_checks.checks,
-    classifies each by type, and groups by stage.
+    Prefers the unified expectations suite and falls back to legacy fields.
     """
     result = PreviewResult()
+    suite_data = ensure_expectation_suite_data(umf_data)
 
-    # Collect from validation_rules
-    for exp in umf_data.get("validation_rules", {}).get("expectations", []):
+    for exp in suite_data.get("expectations", []):
         preview = _classify_expectation(exp)
         _route(result, preview)
 
-    # Collect from quality_checks
-    for check in umf_data.get("quality_checks", {}).get("checks", []):
-        exp = check.get("expectation", {}) if isinstance(check, dict) else {}
-        preview = _classify_expectation(exp, severity_override=check.get("severity"))
+    for exp in suite_data.get("pending", []):
+        preview = _classify_expectation(exp)
         _route(result, preview)
 
     return result
 
 
-def _classify_expectation(
-    exp: dict[str, Any], severity_override: str | None = None
-) -> ExpectationPreview:
+def _classify_expectation(exp: dict[str, Any]) -> ExpectationPreview:
     exp_type = exp.get("type", exp.get("expectation_type", ""))
     meta = exp.get("meta", {})
 
@@ -73,7 +69,7 @@ def _classify_expectation(
         type=exp_type,
         column=exp.get("kwargs", {}).get("column"),
         stage=stage,
-        severity=severity_override or meta.get("severity", "warning"),
+        severity=meta.get("severity", "warning"),
         generated_from=meta.get("generated_from"),
         kwargs=exp.get("kwargs", {}),
     )
