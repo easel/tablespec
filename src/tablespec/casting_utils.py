@@ -10,6 +10,7 @@ This ensures validation tests exactly what ingestion will do.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -50,6 +51,102 @@ COMMON_DATE_FORMATS: tuple[str, ...] = tuple(
 COMMON_TIMESTAMP_FORMATS: tuple[str, ...] = tuple(
     f.umf_format for f in SUPPORTED_DATE_FORMATS if f.format_type.value == "datetime"
 )
+
+
+def _format_to_prefilter_regex(spark_format: str) -> str:
+    """Build a structural regex for a Spark timestamp/date format string.
+
+    The regex is intentionally permissive: it filters out obvious garbage before
+    delegating to Spark parsing, but it does not attempt semantic date validation.
+    """
+    token_patterns = {
+        "yyyy": r"\d{4}",
+        "yy": r"\d{2}",
+        "MM": r"\d{1,2}",
+        "dd": r"\d{1,2}",
+        "HH": r"\d{1,2}",
+        "hh": r"\d{1,2}",
+        "mm": r"\d{1,2}",
+        "ss": r"\d{1,2}",
+        "SSSSSS": r"\d{6}",
+        "SSSSS": r"\d{5}",
+        "SSSS": r"\d{4}",
+        "SSS": r"\d{3}",
+        "SS": r"\d{2}",
+        "S": r"\d",
+        "a": r"(?:AM|PM)",
+    }
+    tokens = sorted(token_patterns, key=len, reverse=True)
+
+    parts: list[str] = ["^"]
+    idx = 0
+    while idx < len(spark_format):
+        if spark_format[idx] == "'":
+            end_idx = spark_format.find("'", idx + 1)
+            literal = spark_format[idx + 1 :] if end_idx == -1 else spark_format[idx + 1 : end_idx]
+            parts.append(re.escape(literal))
+            idx = len(spark_format) if end_idx == -1 else end_idx + 1
+            continue
+
+        matched = False
+        for token in tokens:
+            if spark_format.startswith(token, idx):
+                parts.append(token_patterns[token])
+                idx += len(token)
+                matched = True
+                break
+
+        if matched:
+            continue
+
+        parts.append(re.escape(spark_format[idx]))
+        idx += 1
+
+    parts.append("$")
+    return "".join(parts)
+
+
+def _is_spark_connect_column(column: Column) -> bool:
+    """Best-effort fallback for environments without an explicit session handle."""
+    return "connect" in type(column).__module__
+
+
+def safe_to_timestamp(
+    column: Column,
+    spark_format: str | None = None,
+    spark: object | None = None,
+) -> Column:
+    """Compatibility wrapper for timestamp parsing across classic Spark and Connect."""
+    if not SPARK_AVAILABLE:
+        msg = "PySpark is required for timestamp casting"
+        raise ImportError(msg)
+
+    if spark_format is None:
+        return F.try_to_timestamp(column)  # type: ignore[attr-defined]
+
+    can_use_try_with_format = not _is_spark_connect_column(column)
+    if spark is not None:
+        from tablespec.session import get_capabilities
+
+        can_use_try_with_format = get_capabilities(spark)["try_to_timestamp_with_format"]
+
+    if can_use_try_with_format:
+        return F.try_to_timestamp(column, F.lit(spark_format))  # type: ignore[attr-defined]
+
+    regex = _format_to_prefilter_regex(spark_format)
+    parsed = F.to_timestamp(column, spark_format)  # type: ignore[attr-defined]
+    return F.when(column.rlike(regex), parsed).otherwise(  # type: ignore[attr-defined]
+        F.lit(None).cast("timestamp")  # type: ignore[attr-defined]
+    )
+
+
+def safe_to_date(
+    column: Column,
+    spark_format: str | None = None,
+    spark: object | None = None,
+) -> Column:
+    """Compatibility wrapper that delegates to ``safe_to_timestamp`` then casts to date."""
+    return safe_to_timestamp(column, spark_format=spark_format, spark=spark).cast("date")
 
 
 def build_flexible_formats(

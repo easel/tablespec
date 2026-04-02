@@ -97,6 +97,31 @@ METADATA_COLUMN_DEFINITIONS = {
 }
 
 
+def get_metadata_column_definitions(
+    columns: list[dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Return metadata column definitions with nullable shape matching the table context."""
+    context_keys: list[str] = []
+    for column in columns or []:
+        nullable = column.get("nullable")
+        if isinstance(nullable, dict):
+            context_keys = list(nullable.keys())
+            break
+
+    definitions = {
+        name: {
+            **definition,
+            "nullable": (
+                {context: False for context in context_keys}
+                if context_keys
+                else False
+            ),
+        }
+        for name, definition in METADATA_COLUMN_DEFINITIONS.items()
+    }
+    return definitions
+
+
 @dataclass
 class ConflictDetail:
     """Details about a validation rule conflict."""

@@ -45,6 +45,66 @@ SPARK_AVAILABLE = _spark_available
 logger = logging.getLogger(__name__)
 
 
+def validate_column_pair_date_order(
+    dataframe: Any,
+    value_column: str,
+    reference_column: str,
+    *,
+    or_equal: bool = True,
+    mostly: float = 1.0,
+) -> dict[str, Any]:
+    """Compatibility helper for validating date ordering between two columns."""
+    if not SPARK_AVAILABLE:
+        msg = "PySpark is required for date order validation"
+        raise ImportError(msg)
+
+    scoped = dataframe.filter(
+        F.col(value_column).isNotNull() & F.col(reference_column).isNotNull()
+    )
+    element_count = scoped.count()
+    if element_count == 0:
+        return {
+            "success": True,
+            "result": {
+                "element_count": 0,
+                "unexpected_count": 0,
+                "unexpected_percent": 0.0,
+                "partial_unexpected_list": [],
+                "observed_value": f"{value_column} vs {reference_column}: no non-null pairs",
+            },
+        }
+
+    comparator = (
+        F.col(value_column) >= F.col(reference_column)
+        if or_equal
+        else F.col(value_column) > F.col(reference_column)
+    )
+    unexpected_df = scoped.filter(~comparator)
+    unexpected_count = unexpected_df.count()
+    unexpected_percent = unexpected_count / element_count * 100
+    success_ratio = 1.0 - (unexpected_count / element_count)
+
+    sample_rows = unexpected_df.select(value_column, reference_column).limit(10).collect()
+    operator = "<" if or_equal else "<="
+    partial_unexpected_list = [
+        f"{row[value_column]} {operator} {row[reference_column]}" for row in sample_rows
+    ]
+
+    return {
+        "success": success_ratio >= mostly,
+        "result": {
+            "element_count": element_count,
+            "unexpected_count": unexpected_count,
+            "unexpected_percent": unexpected_percent,
+            "partial_unexpected_list": partial_unexpected_list,
+            "observed_value": (
+                f"{value_column} {'>=' if or_equal else '>'} {reference_column} "
+                f"for {success_ratio * 100:.2f}% of non-null rows"
+            ),
+        },
+    }
+
+
 # Great Expectations Expectation Classes
 if GX_AVAILABLE:
 
@@ -550,7 +610,7 @@ def validate_domain_type(
                     mask = mask | (numeric < min_val)
                 if max_val is not None:
                     mask = mask | (numeric > max_val)
-                mask = mask | numeric.isna()
+                mask = mask | pd.Series(pd.isna(numeric), index=series.index)
                 unexpected_mask = unexpected_mask | mask
             except (ValueError, TypeError):
                 # If conversion fails, all values are unexpected

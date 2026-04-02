@@ -23,6 +23,9 @@ class ColumnProfile:
     mean: float | None = None
     sum: float | None = None
     standard_deviation: float | None = None
+    distinct_values: list[Any] | None = None
+    string_length_min: int | None = None
+    string_length_max: int | None = None
 
 
 @dataclass

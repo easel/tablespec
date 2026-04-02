@@ -216,9 +216,16 @@ for exp in expectations:
     if col:
         print(f"             column: {col}")
 
-check(len(expectations) >= 10, f"should generate >=10 expectations, got {len(expectations)}")
+check(len(expectations) >= 7, f"should generate >=7 expectations, got {len(expectations)}")
 exp_types = {e["type"] for e in expectations}
-check("expect_column_to_exist" in exp_types, "should generate expect_column_to_exist")
+check(
+    "expect_table_columns_to_match_ordered_list" in exp_types,
+    "should generate structural column list expectation",
+)
+check(
+    "expect_column_values_to_cast_to_type" in exp_types,
+    "should generate cast-to-type validation",
+)
 check("expect_column_values_to_not_be_null" in exp_types, "should generate not_be_null")
 
 # ===================================================================

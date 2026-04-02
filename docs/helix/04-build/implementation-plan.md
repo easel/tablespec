@@ -30,8 +30,8 @@ make format         # Format code with ruff
 All of the following must pass before merge:
 1. `ruff format` - No formatting changes
 2. `make lint` - Ruff passes on tracked `src/` and `scripts/` Python files only
-3. `make type-check` - Pyright passes with the maintained `pyrightconfig.json` ignore list for legacy/optional modules
-4. `make test` - Pytest passes on tracked test modules, excluding golden `.expected.py` fixtures and explicitly quarantined stale compatibility tests
+3. `make type-check` - Pyright passes with the minimized `pyrightconfig.json` ignore list for remaining legacy/optional modules
+4. `make test` - Pytest passes on tracked test modules, excluding only golden `.expected.py` fixtures
 5. CI: GitHub Actions coverage pipeline
 
 ## Module Implementation Order (Historical)

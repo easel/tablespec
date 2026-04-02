@@ -48,11 +48,19 @@ class DeequToUmfMapper:
             column_name = column["name"]
             if column_name in profile.columns:
                 column_profile = profile.columns[column_name]
-                column["profiling"] = self._build_profiling_section(column_profile)
+                column["profiling"] = self._build_profiling_section(
+                    column_profile, num_records=profile.num_records
+                )
 
                 # Override nullable based on completeness
                 if column_profile.completeness < 1.0:
-                    column["nullable"] = True
+                    existing_nullable = column.get("nullable")
+                    if isinstance(existing_nullable, dict):
+                        column["nullable"] = {
+                            context: True for context in existing_nullable
+                        }
+                    else:
+                        column["nullable"] = True
                     logger.debug(
                         f"Column {column_name}: Set nullable=True "
                         f"(completeness={column_profile.completeness:.2%})"
@@ -63,7 +71,12 @@ class DeequToUmfMapper:
         )
         return umf
 
-    def _build_profiling_section(self, profile: ColumnProfile) -> dict[str, Any]:
+    def _build_profiling_section(
+        self,
+        profile: ColumnProfile,
+        *,
+        num_records: int | None = None,
+    ) -> dict[str, Any]:
         """Build profiling section for a single column.
 
         Args:
@@ -79,12 +92,25 @@ class DeequToUmfMapper:
             "completeness": profile.completeness,
         }
 
+        if num_records is not None:
+            profiling["num_records"] = num_records
+
         # Add optional fields if available
         if profile.approximate_num_distinct is not None:
             profiling["approximate_num_distinct"] = profile.approximate_num_distinct
 
         if profile.data_type:
             profiling["data_type_inferred"] = profile.data_type
+
+        if profile.distinct_values is not None:
+            profiling["distinct_values"] = profile.distinct_values
+
+        if profile.string_length_min is not None or profile.string_length_max is not None:
+            profiling["string_lengths"] = {}
+            if profile.string_length_min is not None:
+                profiling["string_lengths"]["min_length"] = profile.string_length_min
+            if profile.string_length_max is not None:
+                profiling["string_lengths"]["max_length"] = profile.string_length_max
 
         # Add statistics sub-section if numeric data available
         statistics: dict[str, Any] = {}
