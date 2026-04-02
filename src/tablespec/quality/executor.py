@@ -201,24 +201,7 @@ class QualityCheckExecutor:
                 )
 
         # Extract ingested-stage checks from the unified expectation suite.
-        suite = umf.expectations or migrate_to_expectation_suite(umf.model_dump(exclude_none=True))
-        configured_checks: list[QualityCheck] = []
-        thresholds_dict: dict[str, Any] | None = None
-
-        if suite:
-            from tablespec.models.umf import QualityCheck as QualityCheckModel
-
-            configured_checks = [
-                QualityCheckModel(
-                    expectation=exp.model_dump(),
-                    severity=exp.meta.severity,
-                    blocking=exp.meta.blocking,
-                    description=exp.meta.description,
-                    tags=list(exp.meta.tags),
-                )
-                for exp in suite.ingested
-            ]
-            thresholds_dict = suite.thresholds
+        configured_checks, thresholds_dict = self._get_configured_checks(umf)
 
         # Add default checks (row count change) unless already configured
         checks = self._merge_with_defaults(configured_checks)
@@ -319,6 +302,33 @@ class QualityCheckExecutor:
             total_source_records=total_source_records,
             validated_records=validated_records,
         )
+
+    def _get_configured_checks(
+        self,
+        umf: Any,
+    ) -> tuple[list[QualityCheck], dict[str, Any] | None]:
+        """Return configured ingested checks and thresholds for a loaded UMF.
+
+        Prefer the unified ExpectationSuite when it contains expectations.
+        Fall back to migrating legacy quality_checks when the suite is absent or empty.
+        """
+        suite = umf.expectations
+        if suite is None or not suite.expectations:
+            suite = migrate_to_expectation_suite(umf.model_dump(exclude_none=True))
+
+        from tablespec.models.umf import QualityCheck as QualityCheckModel
+
+        configured_checks = [
+            QualityCheckModel(
+                expectation=exp.model_dump(),
+                severity=exp.meta.severity,
+                blocking=exp.meta.blocking,
+                description=exp.meta.description,
+                tags=list(exp.meta.tags),
+            )
+            for exp in suite.ingested
+        ]
+        return configured_checks, suite.thresholds
 
     def _execute_batch(
         self,
