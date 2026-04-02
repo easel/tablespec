@@ -1,379 +1,13 @@
 """Table validation using UMF specifications with DataFrame error reporting.
 
-The TableValidator module provides comprehensive validation capabilities for PySpark DataFrames
-against Universal Metadata Format (UMF) specifications. It is designed specifically for healthcare
-data quality assurance and generates detailed error reports in structured DataFrame format.
-
-## Module Overview
-
-TableValidator validates data integrity across multiple dimensions:
-- **Schema compliance**: Column presence and structure
-- **Data type validation**: Type consistency with UMF specifications
-- **Nullable constraints**: Context-aware null value validation (configurable contexts, e.g. MD/ME/MP)
-- **Business rules**: Healthcare domain-specific validation rules
-- **Uniqueness constraints**: Critical column duplicate detection
-- **Format validation**: Pattern matching (e.g., state codes)
-- **Value constraints**: Allowed value set validation
-
-## Core Features
-
-- **PySpark Integration**: Native Spark DataFrame processing for scalability
-- **UMF-Driven Validation**: Uses YAML-based Universal Metadata Format specifications
-- **Healthcare Domain Focus**: Built-in patterns for member IDs, LOBs, dates
-- **Structured Error Reporting**: Returns validation errors as structured DataFrames
-- **Context-Aware Validation**: Supports configurable nullable contexts (e.g. Medicaid/MD, Medicare/ME, Marketplace/MP)
-- **Performance Optimized**: Uses SQL queries for efficient large-scale validation
-
-## Usage Examples
-
-### Basic Table Validation
-
-```python
-from pyspark.sql import SparkSession
-from pathlib import Path
-from pulseflow_core.common.table_validator import TableValidator
-
-# Initialize Spark and validator
-spark = SparkSession.builder.appName("DataValidation").getOrCreate()
-validator = TableValidator(spark)
-
-# Load your data
-df = spark.read.csv("member_data.csv", header=True, inferSchema=True)
-
-# Validate against UMF specification
-umf_path = Path("metadata/MemberTable.umf.yaml")
-error_df = validator.validate_table(df, umf_path, "MemberTable")
-
-# Check results
-if error_df.count() > 0:
-    print("Validation errors found:")
-    error_df.show()
-else:
-    print("All validations passed!")
-```
-
-### Healthcare Data Pipeline Integration
-
-```python
-def validate_healthcare_table(spark, table_name, umf_dir):
-    \"\"\"Validate a healthcare table using UMF specifications.\"\"\"
-    validator = TableValidator(spark)
-    df = spark.table(table_name)
-    umf_path = umf_dir / f"{table_name}.umf.yaml"
-
-    error_df = validator.validate_table(df, umf_path, table_name)
-    error_count = error_df.count()
-
-    if error_count > 0:
-        # Save errors for reporting
-        error_df.coalesce(1).write.mode("overwrite").csv(f"validation_errors/{table_name}")
-        return False
-    return True
-
-# Example usage in pipeline
-tables = ["OutreachList", "DispositionFile", "MemberEnrollment"]
-for table in tables:
-    is_valid = validate_healthcare_table(spark, table, Path("umf_metadata/"))
-    if not is_valid:
-        print(f"⚠️  {table} failed validation")
-```
-
-### Custom Validation Workflow
-
-```python
-# Initialize validator
-validator = TableValidator(spark)
-
-# Load UMF and data
-umf_path = Path("specs/Centene_Disposition_V_4_0.umf.yaml")
-df = spark.read.option("header", "true").csv("disposition_data.csv")
-
-# Run validation with table name override
-error_df = validator.validate_table(df, umf_path, "CenteneDisposition")
-
-# Analyze validation results by error type
-error_summary = (error_df
-    .groupBy("error_type", "severity")
-    .count()
-    .orderBy("error_type", "severity")
-)
-
-print("Validation Summary:")
-error_summary.show()
-
-# Filter critical errors only
-critical_errors = error_df.filter(error_df.severity == "error")
-if critical_errors.count() > 0:
-    print("CRITICAL ERRORS - Must fix before proceeding:")
-    critical_errors.select("column_name", "error_message", "error_count").show()
-```
-
-## Validation Types
-
-### 1. Schema Validation
-Ensures DataFrame columns match UMF column definitions:
-- **Missing Columns**: Required columns absent from DataFrame (ERROR)
-- **Extra Columns**: Unexpected columns not in UMF spec (WARNING)
-
-### 2. Data Type Validation
-Validates PySpark data types against UMF specifications:
-- **Type Mapping**: VARCHAR→STRING, INTEGER→INT, etc.
-- **Type Mismatches**: Logs discrepancies with expected vs actual types (ERROR)
-
-### 3. Nullable Constraints
-Context-aware null value validation:
-- **Per-Context Rules**: Different nullability per context (e.g. MD/ME/MP or any configurable keys)
-- **Null Violations**: Counts null values where not allowed (ERROR)
-
-### 4. Business Rules Validation
-
-#### Uniqueness Constraints
-- **Critical Columns**: Validates uniqueness for columns marked as "critical"
-- **Duplicate Detection**: Reports duplicate values with samples
-
-#### Format Rules
-- **Pattern Matching**: Validates format patterns (e.g., "2-character state code")
-- **Regex Validation**: Uses SQL RLIKE for pattern enforcement
-
-#### Value Constraints
-- **Allowed Values**: Validates against permitted value sets
-- **Parsing Support**: Handles various constraint formats:
-  - `MP = "Marketplace", MD = "Medicaid", ME = "Medicare"`
-  - `Valid values: "Y", "N"`
-
-### 5. Healthcare Domain Patterns
-- **Member ID Validation**: Detects member ID patterns and validates constraints
-- **Outreach Table Checks**: Validates essential columns for outreach tables
-- **Context-Based Validation**: Context-specific rules (e.g. LOB-based)
-
-## Error DataFrame Schema
-
-Validation errors are returned as structured DataFrames with the following schema:
-
-```python
-VALIDATION_ERROR_SCHEMA = StructType([
-    StructField("table_name", StringType(), False),           # Table being validated
-    StructField("validation_timestamp", TimestampType(), False), # When validation ran
-    StructField("error_type", StringType(), False),           # Type of validation error
-    StructField("severity", StringType(), False),             # error, warning, info
-    StructField("column_name", StringType(), True),           # Column name (null for table-level)
-    StructField("rule_name", StringType(), True),             # Specific rule that failed
-    StructField("rule_details", StringType(), True),          # Rule specification details
-    StructField("error_message", StringType(), False),        # Human-readable message
-    StructField("error_count", IntegerType(), True),         # Number of records affected
-    StructField("sample_values", StringType(), True),         # Sample failing values
-])
-```
-
-### Error Type Categories
-
-- **schema**: Column presence/structure issues
-- **data_type**: Type mismatch between DataFrame and UMF
-- **nullable**: Null constraint violations
-- **uniqueness**: Duplicate value detection
-- **format**: Pattern/format rule violations
-- **value_constraint**: Invalid values outside allowed sets
-- **business_rule**: Healthcare domain rule violations
-
-### Severity Levels
-
-- **error**: Critical issues requiring immediate attention
-- **warning**: Important issues that should be reviewed
-- **info**: Informational notices for optimization
-
-## UMF Integration
-
-### UMF Structure Requirements
-
-TableValidator expects UMF files with this structure:
-
-```yaml
-table_name: "MemberTable"
-description: "Member demographic data"
-columns:
-  - name: "ClientMemberID"
-    data_type: "VARCHAR"
-    nullable:
-      MD: false  # Not nullable for Medicaid (context keys are configurable)
-      ME: false  # Not nullable for Medicare
-      MP: false  # Not nullable for Marketplace
-    validation_rules:
-      confidence: "critical"  # Triggers uniqueness validation
-      format_rules: []
-      value_constraints: []
-  - name: "LOB"
-    data_type: "VARCHAR"
-    nullable:
-      MD: false
-      ME: false
-      MP: false
-    validation_rules:
-      value_constraints:
-        - 'MP = "Marketplace", MD = "Medicaid", ME = "Medicare"'
-  - name: "State"
-    data_type: "VARCHAR"
-    nullable:
-      MD: true
-      ME: true
-      MP: true
-    validation_rules:
-      format_rules:
-        - "2-character state code"
-```
-
-### Relationship with Other Components
-
-- **UMF Generation**: Created by Phase 1 metadata extraction
-- **Pipeline Integration**: Used in Phase 6 (validation) and Phase 9 (disposition)
-- **Spark Validation**: Complements phase_07_spark_validation.py for comprehensive validation
-
-## Best Practices
-
-### 1. Performance Optimization
-
-```python
-# Cache DataFrames when validating multiple times
-df.cache()
-validator = TableValidator(spark)
-error_df = validator.validate_table(df, umf_path)
-
-# Use broadcast for small lookup tables
-small_df = spark.read.csv("lookup.csv")
-small_df.createOrReplaceGlobalTempView("lookup_broadcast")
-```
-
-### 2. Error Handling
-
-```python
-try:
-    error_df = validator.validate_table(df, umf_path, table_name)
-    error_count = error_df.count()
-
-    if error_count > 0:
-        # Save errors for analysis
-        error_df.write.mode("overwrite").parquet(f"errors/{table_name}")
-
-        # Log summary
-        logger.warning(f"Found {error_count} validation issues in {table_name}")
-
-        # Decide whether to continue processing
-        critical_errors = error_df.filter(error_df.severity == "error").count()
-        if critical_errors > 0:
-            raise ValueError(f"Critical validation errors in {table_name}")
-
-except Exception as e:
-    logger.error(f"Validation failed for {table_name}: {e}")
-    raise
-```
-
-### 3. Monitoring and Alerting
-
-```python
-def validate_with_monitoring(validator, df, umf_path, table_name):
-    \"\"\"Validate table with comprehensive monitoring.\"\"\"
-    start_time = time.time()
-
-    error_df = validator.validate_table(df, umf_path, table_name)
-
-    # Performance metrics
-    validation_time = time.time() - start_time
-    row_count = df.count()
-    error_count = error_df.count()
-
-    # Log metrics
-    logger.info(f"Validation completed for {table_name}:")
-    logger.info(f"  Rows validated: {row_count:,}")
-    logger.info(f"  Validation time: {validation_time:.2f}s")
-    logger.info(f"  Errors found: {error_count}")
-    logger.info(f"  Rate: {row_count/validation_time:,.0f} rows/sec")
-
-    # Quality score
-    if row_count > 0:
-        quality_score = max(0, (1 - error_count/row_count) * 100)
-        logger.info(f"  Data quality score: {quality_score:.1f}%")
-
-    return error_df
-```
-
-### 4. Integration Patterns
-
-```python
-class DataQualityPipeline:
-    \"\"\"Example pipeline integration pattern.\"\"\"
-
-    def __init__(self, spark_session):
-        self.spark = spark_session
-        self.validator = TableValidator(spark_session)
-
-    def validate_pipeline_stage(self, table_name, umf_dir, stage_name):
-        \"\"\"Validate a pipeline stage.\"\"\"
-        logger.info(f"Validating {stage_name}: {table_name}")
-
-        df = self.spark.table(table_name)
-        umf_path = umf_dir / f"{table_name}.umf.yaml"
-
-        error_df = self.validator.validate_table(df, umf_path, table_name)
-
-        # Stage-specific handling
-        if stage_name == "ingestion":
-            # More tolerant of warnings during ingestion
-            critical_count = error_df.filter(error_df.severity == "error").count()
-            return critical_count == 0
-        elif stage_name == "final":
-            # Strict validation before final output
-            return error_df.count() == 0
-
-        return True
-```
-
-### 5. Custom Rule Extensions
-
-```python
-# Extend TableValidator for domain-specific rules
-class HealthcareTableValidator(TableValidator):
-    \"\"\"Extended validator with healthcare-specific rules.\"\"\"
-
-    def validate_member_demographics(self, df, umf_path):
-        \"\"\"Additional validation for member demographic tables.\"\"\"
-        base_errors = self.validate_table(df, umf_path)
-
-        # Add custom healthcare validations
-        custom_errors = []
-
-        # Validate birth dates are reasonable
-        if "BirthDate" in df.columns:
-            invalid_dates = df.filter(
-                (df.BirthDate < "1900-01-01") |
-                (df.BirthDate > "2023-12-31")
-            ).count()
-
-            if invalid_dates > 0:
-                # Add to error list using same format
-                pass
-
-        return base_errors
-```
-
-## Error Handling and Logging
-
-The validator includes comprehensive error handling:
-
-- **SQL Exceptions**: Gracefully handles SQL execution errors with warning logs
-- **Missing Files**: Raises appropriate exceptions for missing UMF files
-- **Invalid YAML**: Handles malformed UMF files with descriptive errors
-- **Schema Mismatches**: Continues validation even with structural issues
-- **Performance Issues**: Logs warnings for slow validation operations
-
-## Thread Safety and Performance
-
-- **Spark Integration**: Leverages Spark's distributed processing capabilities
-- **SQL Optimization**: Uses efficient SQL queries for large-scale validation
-- **Memory Management**: Processes data in Spark DataFrames without loading into driver memory
-- **Concurrent Safe**: Safe for use in multi-threaded Spark applications
-
-TableValidator is designed for production healthcare data pipelines where data quality
-is critical and validation must scale to millions of records while providing
-detailed, actionable error reporting.
+The TableValidator module provides validation of PySpark DataFrames against
+Universal Metadata Format (UMF) specifications, generating structured error
+reports as DataFrames.
+
+This implementation delegates to ``GXSuiteExecutor`` +
+``BaselineExpectationGenerator`` for GX-supported expectations, and falls
+back to direct SQL queries for legacy checks (format rules, value constraints,
+schema diff).
 """
 
 from __future__ import annotations
@@ -381,7 +15,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from pyspark.sql.types import (
@@ -417,7 +51,13 @@ VALIDATION_ERROR_SCHEMA = StructType(
 
 
 class TableValidator:
-    """Validates Spark DataFrames against UMF specifications."""
+    """Validates Spark DataFrames against UMF specifications.
+
+    Compatibility shim that routes GX-supported expectations through
+    ``GXSuiteExecutor`` + ``BaselineExpectationGenerator``, and keeps
+    SQL-based validation for schema, data-type, format-rule, and
+    value-constraint checks.
+    """
 
     def __init__(self, spark: SparkSession) -> None:
         """Initialize the validator with a Spark session.
@@ -429,6 +69,19 @@ class TableValidator:
         self.spark = spark
         self.logger = logging.getLogger(self.__class__.__name__)
         self.errors: list[dict] = []
+
+        # Set up GX execution path
+        try:
+            from tablespec.gx_baseline import BaselineExpectationGenerator
+            from tablespec.validation.gx_executor import GXSuiteExecutor
+
+            self._gen = BaselineExpectationGenerator()
+            self._exec = GXSuiteExecutor(spark=spark)
+            self._gx_available = True
+        except ImportError:
+            self._gen = None  # type: ignore[assignment]
+            self._exec = None  # type: ignore[assignment]
+            self._gx_available = False
 
     def validate_table(
         self,
@@ -457,30 +110,83 @@ class TableValidator:
         # Clear previous errors
         self.errors = []
 
-        # Run all validation checks
+        # --- SQL-based checks (schema, data types, business rules) ---
         self._validate_schema(df, umf, table, timestamp)
         self._validate_data_types(df, umf, table, timestamp)
         self._validate_nullable(df, umf, table, timestamp)
         self._validate_rules(df, umf, table, timestamp)
 
+        # --- GX-based checks (baseline expectations) ---
+        if self._gx_available:
+            self._validate_via_gx(df, umf, table, timestamp)
+
         # Convert errors to DataFrame
         if self.errors:
             self.logger.info(f"Found {len(self.errors)} validation issues for {table}")
             return self.spark.createDataFrame(self.errors, VALIDATION_ERROR_SCHEMA)
-        self.logger.info(f"✓ All validations passed for {table}")
+        self.logger.info(f"All validations passed for {table}")
         # Return empty DataFrame with correct schema
         return self.spark.createDataFrame([], VALIDATION_ERROR_SCHEMA)
 
-    def _load_umf(self, umf_path: Path) -> dict:
-        """Load UMF specification from YAML file.
+    # ------------------------------------------------------------------
+    # GX-based validation
+    # ------------------------------------------------------------------
 
-        Args:
-            umf_path: Path to UMF YAML file
+    def _validate_via_gx(
+        self,
+        df: DataFrame,
+        umf: dict[str, Any],
+        table_name: str,
+        timestamp: datetime,
+    ) -> None:
+        """Run baseline expectations via GXSuiteExecutor and map failures to errors.
 
-        Returns:
-            UMF specification as dictionary
-
+        Only adds errors for GX-specific checks that aren't already covered
+        by the SQL-based validation above (e.g. cast-to-type, domain-type).
         """
+        # Expectation types already handled by SQL-based validation
+        sql_covered_types = {
+            "expect_table_column_count_to_equal",
+            "expect_table_columns_to_match_ordered_list",
+            "expect_column_values_to_not_be_null",
+            "expect_column_value_lengths_to_be_between",
+        }
+
+        try:
+            expectations = self._gen.generate_baseline_expectations(umf, include_structural=False)
+            # Filter to only GX-specific expectations
+            gx_expectations = [e for e in expectations if e.get("type") not in sql_covered_types]
+
+            if not gx_expectations:
+                return
+
+            result = self._exec.execute_suite(df, gx_expectations)
+
+            for er in result.results:
+                if not er.success:
+                    self._add_error(
+                        table_name=table_name,
+                        timestamp=timestamp,
+                        error_type="gx_expectation",
+                        severity="warning",
+                        column_name=er.column,
+                        rule_name=er.expectation_type,
+                        rule_details=str(er.details.get("observed_value", ""))
+                        if isinstance(er.details, dict)
+                        else None,
+                        error_message=f"GX expectation {er.expectation_type} failed"
+                        + (f" for column {er.column}" if er.column else ""),
+                        error_count=er.unexpected_count if er.unexpected_count else None,
+                    )
+        except Exception as e:
+            self.logger.warning(f"GX-based validation failed (non-fatal): {e}")
+
+    # ------------------------------------------------------------------
+    # Existing SQL-based validation (preserved for compatibility)
+    # ------------------------------------------------------------------
+
+    def _load_umf(self, umf_path: Path) -> dict:
+        """Load UMF specification from YAML file."""
         try:
             with Path(umf_path).open(encoding="utf-8") as f:
                 umf = yaml.safe_load(f)
@@ -505,21 +211,7 @@ class TableValidator:
         error_count: int | None = None,
         sample_values: str | None = None,
     ) -> None:
-        """Add a validation error to the collection.
-
-        Args:
-            table_name: Name of the table being validated
-            timestamp: When the validation occurred
-            error_type: Type of validation error
-            severity: Severity level (error, warning, info)
-            error_message: Human-readable error message
-            column_name: Column name if column-specific error
-            rule_name: Name of the validation rule that failed
-            rule_details: Details about the rule specification
-            error_count: Number of records affected
-            sample_values: Sample of failing values
-
-        """
+        """Add a validation error to the collection."""
         self.errors.append(
             {
                 "table_name": table_name,
@@ -542,15 +234,7 @@ class TableValidator:
         table_name: str,
         timestamp: datetime,
     ) -> None:
-        """Validate that DataFrame schema matches UMF column definitions.
-
-        Args:
-            df: DataFrame to validate
-            umf: UMF specification
-            table_name: Name of the table
-            timestamp: Validation timestamp
-
-        """
+        """Validate that DataFrame schema matches UMF column definitions."""
         df_columns = set(df.columns)
         umf_columns = {col["name"] for col in umf.get("columns", [])}
 
@@ -589,15 +273,7 @@ class TableValidator:
         table_name: str,
         timestamp: datetime,
     ) -> None:
-        """Validate DataFrame column data types against UMF specification.
-
-        Args:
-            df: DataFrame to validate
-            umf: UMF specification
-            table_name: Name of the table
-            timestamp: Validation timestamp
-
-        """
+        """Validate DataFrame column data types against UMF specification."""
         df_schema = {
             field.name: field.dataType.simpleString() for field in df.schema.fields
         }
@@ -607,11 +283,10 @@ class TableValidator:
             expected_type = col_spec.get("data_type", "").upper()
 
             if col_name not in df_schema:
-                continue  # Already handled in schema validation
+                continue
 
             actual_type = df_schema[col_name].upper()
 
-            # Map UMF types to Spark types for comparison
             type_mapping = {
                 "VARCHAR": ["STRING"],
                 "CHAR": ["STRING"],
@@ -646,45 +321,31 @@ class TableValidator:
     ) -> None:
         """Validate nullable constraints based on UMF specification.
 
-        Nullable contexts are configurable (e.g. MD/ME/MP for healthcare LOBs,
-        or any arbitrary context keys). When a LOB column exists in the DataFrame,
-        context-specific validation is performed; otherwise global validation applies.
-
-        Args:
-            df: DataFrame to validate
-            umf: UMF specification
-            table_name: Name of the table
-            timestamp: Validation timestamp
-
+        Only uses context-based nullable validation when the UMF explicitly
+        declares a ``context_column``.
         """
-        # Create temp view for SQL queries
         temp_view = f"{table_name}_validation_temp"
         df.createOrReplaceTempView(temp_view)
 
-        # Check if table has LOB column for context-specific validation
-        has_lob_column = "LOB" in df.columns
+        context_column = umf.get("context_column")
+        has_context_column = context_column is not None and context_column in df.columns
 
         for col_spec in umf.get("columns", []):
             col_name = col_spec["name"]
             nullable_spec = col_spec.get("nullable", {})
 
             if col_name not in df.columns:
-                continue  # Already handled in schema validation
+                continue
 
-            # Check nullable constraints for each context
             for context, is_nullable in nullable_spec.items():
-                if not is_nullable:  # Column should not be null for this context
-                    # Build query based on whether LOB column exists
-                    if has_lob_column:
-                        # Context-specific validation for tables with LOB column
+                if not is_nullable:
+                    if has_context_column:
                         null_query = f"""
                         SELECT COUNT(*) as null_count
                         FROM {temp_view}
-                        WHERE {col_name} IS NULL AND LOB = '{context}'
+                        WHERE {col_name} IS NULL AND {context_column} = '{context}'
                         """
                     else:
-                        # Global validation for lookup/disposition tables without LOB
-                        # Only check once (on first context) to avoid duplicate checks
                         if context != next(iter(nullable_spec.keys())):
                             continue
                         null_query = f"""
@@ -700,12 +361,12 @@ class TableValidator:
                         if null_count > 0:
                             error_msg = (
                                 f"Found {null_count} null values in '{col_name}' for context '{context}'"
-                                if has_lob_column
+                                if has_context_column
                                 else f"Found {null_count} null values in '{col_name}'"
                             )
                             rule_details = (
                                 f"Column must not be null for context '{context}'"
-                                if has_lob_column
+                                if has_context_column
                                 else "Column must not be null"
                             )
 
@@ -732,16 +393,7 @@ class TableValidator:
         table_name: str,
         timestamp: datetime,
     ) -> None:
-        """Validate business rules from UMF validation_rules section.
-
-        Args:
-            df: DataFrame to validate
-            umf: UMF specification
-            table_name: Name of the table
-            timestamp: Validation timestamp
-
-        """
-        # Create temp view for SQL queries
+        """Validate business rules from UMF validation_rules section."""
         temp_view = f"{table_name}_validation_temp"
         df.createOrReplaceTempView(temp_view)
 
@@ -750,21 +402,18 @@ class TableValidator:
             validation_rules = col_spec.get("validation_rules", {})
 
             if col_name not in df.columns:
-                continue  # Already handled in schema validation
+                continue
 
-            # Check uniqueness for critical columns
             if validation_rules.get("confidence") == "critical":
                 self._validate_uniqueness(
                     df, temp_view, col_name, table_name, timestamp
                 )
 
-            # Validate format rules
             for format_rule in validation_rules.get("format_rules", []):
                 self._validate_format_rule(
                     df, temp_view, col_name, format_rule, table_name, timestamp
                 )
 
-            # Validate value constraints
             for value_constraint in validation_rules.get("value_constraints", []):
                 self._validate_value_constraint(
                     df, temp_view, col_name, value_constraint, table_name, timestamp
@@ -778,16 +427,7 @@ class TableValidator:
         table_name: str,
         timestamp: datetime,
     ) -> None:
-        """Validate uniqueness constraint for critical columns.
-
-        Args:
-            df: DataFrame to validate
-            temp_view: Name of temporary view
-            col_name: Column name to check
-            table_name: Name of the table
-            timestamp: Validation timestamp
-
-        """
+        """Validate uniqueness constraint for critical columns."""
         dup_query = f"""
         SELECT {col_name}, COUNT(*) as cnt
         FROM {temp_view}
@@ -801,7 +441,6 @@ class TableValidator:
             dup_count = duplicates.count()
 
             if dup_count > 0:
-                # Get sample duplicate values
                 samples = duplicates.limit(5).collect()
                 sample_str = ", ".join([str(row[col_name]) for row in samples])
 
@@ -829,20 +468,8 @@ class TableValidator:
         table_name: str,
         timestamp: datetime,
     ) -> None:
-        """Validate format rules (basic pattern matching).
-
-        Args:
-            df: DataFrame to validate
-            temp_view: Name of temporary view
-            col_name: Column name to check
-            format_rule: Format rule description
-            table_name: Name of the table
-            timestamp: Validation timestamp
-
-        """
-        # For now, just check common patterns
+        """Validate format rules (basic pattern matching)."""
         if "2-character" in format_rule.lower() and "state" in format_rule.lower():
-            # Validate 2-character state codes
             invalid_query = f"""
             SELECT {col_name}, COUNT(*) as cnt
             FROM {temp_view}
@@ -885,21 +512,9 @@ class TableValidator:
         table_name: str,
         timestamp: datetime,
     ) -> None:
-        """Validate value constraints (allowed values).
-
-        Args:
-            df: DataFrame to validate
-            temp_view: Name of temporary view
-            col_name: Column name to check
-            value_constraint: Value constraint description
-            table_name: Name of the table
-            timestamp: Validation timestamp
-
-        """
-        # Extract allowed values from constraint description
+        """Validate value constraints (allowed values)."""
         allowed_values = []
 
-        # Parse common patterns like "MP = Marketplace", "MD = Medicaid", "ME = Medicare"
         if "=" in value_constraint:
             parts = value_constraint.split(",")
             for part in parts:
@@ -908,7 +523,6 @@ class TableValidator:
                     if value:
                         allowed_values.append(value)
 
-        # Check simple list patterns like ["Y", "N"]
         if not allowed_values and any(
             x in value_constraint for x in ['"Y"', '"N"', "'Y'", "'N'"]
         ):
@@ -918,7 +532,6 @@ class TableValidator:
                 allowed_values.append("N")
 
         if allowed_values:
-            # Build SQL to check for invalid values
             value_list = "', '".join(allowed_values)
             invalid_query = f"""
             SELECT {col_name}, COUNT(*) as cnt

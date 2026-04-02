@@ -13,8 +13,6 @@ from typing import Any, Literal
 import yaml
 
 from tablespec.format_utils import convert_umf_format_to_strftime
-from tablespec.models.umf import REDUNDANT_VALIDATION_TYPES
-from tablespec.type_mappings import map_to_gx_spark_type
 
 logger = logging.getLogger(__name__)
 
@@ -147,8 +145,14 @@ class BaselineExpectationGenerator:
             expectations.extend(self._generate_structural_expectations(umf_data))
 
         # Column-level baseline expectations
+        context_column = umf_data.get("context_column")
         for column in umf_data.get("columns", []):
-            expectations.extend(self.generate_baseline_column_expectations(column))
+            expectations.extend(
+                self.generate_baseline_column_expectations(column, context_column=context_column)
+            )
+
+        # Cross-column expectations (date ordering, etc.)
+        expectations.extend(self._generate_cross_column_expectations(umf_data))
 
         return expectations
 
@@ -199,8 +203,78 @@ class BaselineExpectationGenerator:
 
         return expectations
 
+    def _generate_cross_column_expectations(
+        self, umf_data: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Generate cross-column expectations from column relationships.
+
+        Detects date-range pairs (start/end patterns) and generates
+        expect_column_pair_values_a_to_be_greater_than_b expectations.
+
+        Args:
+        ----
+            umf_data: UMF dictionary (loaded from YAML)
+
+        Returns:
+        -------
+            List of expectation dictionaries
+
+        """
+        expectations = []
+        columns = umf_data.get("columns", [])
+
+        # Build lookup of date/datetime columns
+        date_columns: dict[str, dict[str, Any]] = {}
+        for col in columns:
+            dt = col.get("data_type", "").upper()
+            if dt in ("DATE", "DATETIME", "TIMESTAMP"):
+                date_columns[col["name"]] = col
+
+        # Detect start/end pairs by naming convention
+        start_patterns = ("start_", "begin_", "effective_", "from_")
+        end_patterns = ("end_", "stop_", "expiry_", "to_", "termination_")
+
+        start_cols = [
+            name
+            for name in date_columns
+            if any(name.lower().startswith(p) for p in start_patterns)
+        ]
+
+        for start_col in start_cols:
+            # Try to find matching end column
+            base = start_col.lower()
+            for prefix in start_patterns:
+                if base.startswith(prefix):
+                    base = base[len(prefix) :]
+                    break
+
+            for end_prefix in end_patterns:
+                candidate = end_prefix + base
+                # Case-insensitive match
+                for name in date_columns:
+                    if name.lower() == candidate:
+                        expectations.append(
+                            {
+                                "type": "expect_column_pair_values_a_to_be_greater_than_b",
+                                "kwargs": {
+                                    "column_A": name,  # end date
+                                    "column_B": start_col,  # start date
+                                    "or_equal": True,
+                                },
+                                "meta": {
+                                    "description": f"{name} should be >= {start_col} (date range ordering)",
+                                    "severity": "warning",
+                                    "generated_from": "baseline",
+                                },
+                            }
+                        )
+
+        return expectations
+
     def generate_baseline_column_expectations(
-        self, column: dict[str, Any]
+        self,
+        column: dict[str, Any],
+        context_column: str | None = None,
     ) -> list[dict[str, Any]]:
         """Generate baseline expectations for a single column from UMF metadata.
 
@@ -209,6 +283,9 @@ class BaselineExpectationGenerator:
         Args:
         ----
             column: Column dictionary from UMF
+            context_column: Optional name of the context column (e.g. "LOB").
+                When set, per-context nullable rules emit filtered expectations
+                using ``row_condition``.
 
         Returns:
         -------
@@ -224,21 +301,46 @@ class BaselineExpectationGenerator:
         # are no longer generated here as they are in REDUNDANT_VALIDATION_TYPES
         nullable = column.get("nullable", {})
         if nullable:
-            # Check if required for any context
-            required_contexts = [ctx for ctx, is_null in nullable.items() if not is_null]
-            if required_contexts:
-                expectations.append(
-                    {
-                        "type": "expect_column_values_to_not_be_null",
-                        "kwargs": {"column": column_name},
-                        "meta": {
-                            "description": f"Column {column_name} is required (nullable=false) for contexts: {', '.join(required_contexts)}",
-                            "severity": "critical",
-                            "contexts": required_contexts,
-                            "generated_from": "baseline",
-                        },
-                    }
-                )
+            if isinstance(nullable, dict):
+                # Dict format: {context: is_nullable} e.g. {"MD": False, "MP": True}
+                required_contexts = [ctx for ctx, is_null in nullable.items() if not is_null]
+                if required_contexts:
+                    if context_column:
+                        # Per-context expectations using row_condition
+                        for ctx in required_contexts:
+                            expectations.append(
+                                {
+                                    "type": "expect_column_values_to_not_be_null",
+                                    "kwargs": {
+                                        "column": column_name,
+                                        "row_condition": f"{context_column}='{ctx}'",
+                                        # row_condition uses Spark SQL syntax — requires
+                                        # a Spark or Sail session.
+                                        "condition_parser": "spark",
+                                    },
+                                    "meta": {
+                                        "description": f"Column {column_name} is required (nullable=false) for {context_column}='{ctx}'",
+                                        "severity": "critical",
+                                        "contexts": [ctx],
+                                        "generated_from": "baseline",
+                                    },
+                                }
+                            )
+                    else:
+                        # No context_column — most-restrictive-wins (global not-null)
+                        expectations.append(
+                            {
+                                "type": "expect_column_values_to_not_be_null",
+                                "kwargs": {"column": column_name},
+                                "meta": {
+                                    "description": f"Column {column_name} is required (nullable=false) for contexts: {', '.join(required_contexts)}",
+                                    "severity": "critical",
+                                    "contexts": required_contexts,
+                                    "generated_from": "baseline",
+                                },
+                            }
+                        )
+            # If nullable is True (bool from DeequToUmfMapper), column IS nullable — no not-null expectation needed
 
         # 2. Length constraints
         max_length = column.get("max_length") or column.get("length")
@@ -408,10 +510,21 @@ class BaselineExpectationGenerator:
 
         col_name = column["name"]
 
-        # Uniqueness from high cardinality
+        # Check what baseline already covers to avoid duplicates
+        nullable = column.get("nullable", {})
+        has_baseline_not_null = isinstance(nullable, dict) and any(
+            not v for v in nullable.values()
+        )
+        has_baseline_length = bool(column.get("max_length") or column.get("length"))
+
+        # Uniqueness from high cardinality (use threshold for approximate counts)
         num_distinct = profiling.get("approximate_num_distinct")
         num_records = profiling.get("num_records")
-        if num_distinct and num_records and num_distinct == num_records:
+        if (
+            num_distinct
+            and num_records
+            and num_distinct >= 0.99 * num_records
+        ):
             expectations.append(
                 {
                     "type": "expect_column_values_to_be_unique",
@@ -424,9 +537,10 @@ class BaselineExpectationGenerator:
                 }
             )
 
-        # Range from min/max
-        minimum = profiling.get("minimum")
-        maximum = profiling.get("maximum")
+        # Range from min/max (canonical location: profiling.statistics.min/max)
+        statistics = profiling.get("statistics", {})
+        minimum = statistics.get("min")
+        maximum = statistics.get("max")
         if minimum is not None and maximum is not None:
             expectations.append(
                 {
@@ -440,20 +554,91 @@ class BaselineExpectationGenerator:
                 }
             )
 
-        # Not-null from high completeness
+        # Not-null from high completeness (skip if baseline already generates not-null)
         completeness = profiling.get("completeness")
-        if completeness is not None and completeness > 0.99:
+        if not has_baseline_not_null:
+            if completeness is not None and completeness > 0.99:
+                expectations.append(
+                    {
+                        "type": "expect_column_values_to_not_be_null",
+                        "kwargs": {"column": col_name},
+                        "meta": {
+                            "description": f"Column {col_name} has {completeness:.1%} completeness in profiling",
+                            "severity": "warning",
+                            "generated_from": "profiling",
+                        },
+                    }
+                )
+            elif completeness is not None and completeness >= 0.95:
+                # Soft null check for moderate completeness
+                expectations.append(
+                    {
+                        "type": "expect_column_values_to_not_be_null",
+                        "kwargs": {"column": col_name, "mostly": completeness},
+                        "meta": {
+                            "description": f"Column {col_name} has {completeness:.1%} completeness in profiling (soft check)",
+                            "severity": "warning",
+                            "generated_from": "profiling",
+                        },
+                    }
+                )
+
+        # Value set from low-cardinality columns
+        distinct_values = profiling.get("distinct_values")
+        if distinct_values:
             expectations.append(
                 {
-                    "type": "expect_column_values_to_not_be_null",
-                    "kwargs": {"column": col_name},
+                    "type": "expect_column_values_to_be_in_set",
+                    "kwargs": {"column": col_name, "value_set": distinct_values},
                     "meta": {
-                        "description": f"Column {col_name} has {completeness:.1%} completeness in profiling",
+                        "description": f"Column {col_name} values must be in observed set of {len(distinct_values)} values",
                         "severity": "warning",
                         "generated_from": "profiling",
                     },
                 }
             )
+
+        # String length from profiling (skip if baseline already generates length from max_length)
+        string_lengths = profiling.get("string_lengths", {})
+        sl_min = string_lengths.get("min_length")
+        sl_max = string_lengths.get("max_length")
+        if (sl_min is not None or sl_max is not None) and not has_baseline_length:
+            kwargs: dict[str, Any] = {"column": col_name}
+            if sl_min is not None:
+                kwargs["min_value"] = sl_min
+            if sl_max is not None:
+                kwargs["max_value"] = sl_max
+            expectations.append(
+                {
+                    "type": "expect_column_value_lengths_to_be_between",
+                    "kwargs": kwargs,
+                    "meta": {
+                        "description": f"Column {col_name} string lengths between {sl_min} and {sl_max} based on profiling",
+                        "severity": "warning",
+                        "generated_from": "profiling",
+                    },
+                }
+            )
+
+        # Regex patterns from profiling (detected format patterns)
+        patterns = profiling.get("patterns", [])
+        if not patterns:
+            patterns = profiling.get("format_patterns", [])
+        if patterns:
+            # Use the most common pattern (first in list)
+            primary_pattern = patterns[0] if isinstance(patterns, list) else patterns
+            if isinstance(primary_pattern, str):
+                expectations.append(
+                    {
+                        "type": "expect_column_values_to_match_regex",
+                        "kwargs": {"column": col_name, "regex": primary_pattern, "mostly": 0.95},
+                        "meta": {
+                            "description": f"Column {col_name} values should match pattern {primary_pattern} based on profiling",
+                            "severity": "warning",
+                            "generated_from": "profiling",
+                        },
+                    }
+                )
 
         return expectations
 
@@ -510,47 +695,11 @@ class UmfToGxMapper:
             "expectations": [],
         }
 
-        # Generate baseline expectations from UMF metadata
+        # Generate all expectations (baseline + profiling) from UMF metadata
+        # BaselineExpectationGenerator handles both baseline and profiling expectations
         suite["expectations"].extend(
             self.baseline_generator.generate_baseline_expectations(umf)
         )
 
-        # Generate expectations from profiling data
-        for column in umf.get("columns", []):
-            expectations = self._generate_profiling_expectations(column, strictness)
-            suite["expectations"].extend(expectations)
-
         logger.info(f"Generated {len(suite['expectations'])} expectations")
         return suite
-
-    def _generate_profiling_expectations(
-        self,
-        column: dict[str, Any],
-        strictness: str,  # noqa: ARG002
-    ) -> list[dict[str, Any]]:
-        """Generate expectations from profiling data (not baseline).
-
-        Args:
-        ----
-            column: Column dictionary from UMF
-            strictness: Strictness level (reserved for future use)
-
-        Returns:
-        -------
-            List of expectation dictionaries
-
-        """
-        expectations = []
-        profiling = column.get("profiling", {})
-
-        # Only generate profiling-based expectations if profiling data exists
-        if not profiling:
-            return expectations
-
-        # TODO(dev): Add profiling-based expectations
-        # - uniqueness → expect_column_values_to_be_unique
-        # - min/max → expect_column_min/max_to_be_between
-        # - value sets → expect_column_values_to_be_in_set
-        # - patterns → expect_column_values_to_match_regex
-
-        return expectations

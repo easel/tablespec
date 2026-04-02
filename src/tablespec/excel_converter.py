@@ -76,11 +76,9 @@ class ExcelConstants:
     # Table type options
     TABLE_TYPES: ClassVar[list[str]] = ["provided", "generated", "lookup"]
 
-    # Default nullable context keys for Excel column headers.
-    # These represent the default healthcare contexts (Medicaid/Marketplace/Medicare).
-    # The Excel format uses a fixed set of columns, so these serve as the default
-    # presentation layer even though the underlying Nullable model accepts arbitrary keys.
-    LOBS: ClassVar[list[str]] = ["MD", "MP", "ME"]
+    # Default nullable context keys when no per-context nullable dicts exist in UMF data.
+    # Used as fallback for backward compatibility with existing Excel templates.
+    DEFAULT_NULLABLE_CONTEXTS: ClassVar[list[str]] = ["MD", "MP", "ME"]
 
     # Domain types - fallback list if registry is unavailable
     _DEFAULT_DOMAIN_TYPES: ClassVar[list[str]] = [
@@ -356,6 +354,26 @@ class UMFToExcelConverter:
         self.workbook: openpyxl.Workbook | None = None
         self.constants = ExcelConstants()
 
+    @staticmethod
+    def _extract_context_keys(umf: UMF) -> list[str]:
+        """Extract nullable context keys from UMF columns.
+
+        Scans all columns' nullable fields to collect the union of context keys.
+        Returns them in stable sorted order. Falls back to the default contexts
+        (MD, MP, ME) when no per-context nullable dicts are found.
+        """
+        keys: set[str] = set()
+        for col in umf.columns:
+            if col.nullable is None:
+                continue
+            if isinstance(col.nullable, Nullable):
+                keys.update(col.nullable.model_dump(exclude_none=True).keys())
+            elif isinstance(col.nullable, dict):
+                keys.update(col.nullable.keys())
+        if not keys:
+            return list(ExcelConstants.DEFAULT_NULLABLE_CONTEXTS)
+        return sorted(keys)
+
     def _get_default_font(self) -> Font:
         """Get default font for data cells."""
         return Font(size=self.constants.FONT_SIZE_DEFAULT)
@@ -516,11 +534,26 @@ class UMFToExcelConverter:
         ws.column_dimensions["B"].width = 50
 
     def _create_columns_sheet(self, umf: UMF) -> None:
-        """Create Columns sheet with column definitions."""
+        """Create Columns sheet with column definitions.
+
+        Nullable context columns are derived dynamically from the UMF data.
+        For example, if columns use ``nullable: {MD: false, MP: true}``, the
+        sheet will contain "Nullable MD" and "Nullable MP" headers. When no
+        per-context nullable dicts exist, the default contexts (MD, MP, ME)
+        are used for backward compatibility.
+        """
         if self.workbook is None:
             msg = "Workbook not initialized"
             raise RuntimeError(msg)
         ws = self.workbook.create_sheet(self.constants.SHEET_COLUMNS)
+
+        # Derive nullable context keys from UMF data
+        context_keys = self._extract_context_keys(umf)
+        num_contexts = len(context_keys)
+
+        # Fixed columns before nullable: indices 0-6
+        # A=Name, B=Canonical Name, C=Aliases, D=Data Type, E=Length, F=Precision, G=Scale
+        NULLABLE_START = 7  # First nullable column index (0-based)
 
         # Headers
         headers = [
@@ -531,9 +564,11 @@ class UMFToExcelConverter:
             "Length",
             "Precision",
             "Scale",
-            "Nullable MD",
-            "Nullable MP",
-            "Nullable ME",
+        ]
+        for key in context_keys:
+            headers.append(f"Nullable {key}")
+        # Columns after nullable
+        post_nullable_headers = [
             "Description",
             "Sample Values",
             "Source",
@@ -544,9 +579,24 @@ class UMFToExcelConverter:
             "Notes",
             "_Validation",
         ]
+        headers.extend(post_nullable_headers)
 
         self._add_header_row(ws, headers)
-        self._add_data_validation_to_columns(ws)
+        self._add_data_validation_to_columns(ws, num_contexts=num_contexts)
+
+        # Helper: column letter from 0-based index
+        def col_letter(idx: int) -> str:
+            return get_column_letter(idx + 1)
+
+        # Offsets for post-nullable fields (0-based indices)
+        desc_idx = NULLABLE_START + num_contexts
+        sample_idx = desc_idx + 1
+        source_idx = desc_idx + 2
+        key_type_idx = desc_idx + 3
+        domain_type_idx = desc_idx + 4
+        reporting_idx = desc_idx + 5
+        format_idx = desc_idx + 6
+        notes_idx = desc_idx + 7
 
         # Data
         row = 2
@@ -578,75 +628,57 @@ class UMFToExcelConverter:
             ws[f"G{row}"] = col.scale or ""
             self._apply_font_to_cell(ws[f"G{row}"], default_font)
 
-            # Nullable
+            # Nullable - write dynamic context columns
             if col.nullable:
-                if isinstance(col.nullable, dict):
-                    ws[f"H{row}"] = col.nullable.get("MD", False)
-                    ws[f"I{row}"] = col.nullable.get("MP", False)
-                    ws[f"J{row}"] = col.nullable.get("ME", False)
-                elif isinstance(col.nullable, Nullable):
-                    ws[f"H{row}"] = col.nullable.MD if col.nullable.MD is not None else False
-                    ws[f"I{row}"] = col.nullable.MP if col.nullable.MP is not None else False
-                    ws[f"J{row}"] = col.nullable.ME if col.nullable.ME is not None else False
+                nullable_data: dict[str, bool] = {}
+                if isinstance(col.nullable, Nullable):
+                    nullable_data = col.nullable.model_dump(exclude_none=True)
+                elif isinstance(col.nullable, dict):
+                    nullable_data = col.nullable
 
-            self._apply_font_to_cell(ws[f"H{row}"], default_font)
-            self._apply_font_to_cell(ws[f"I{row}"], default_font)
-            self._apply_font_to_cell(ws[f"J{row}"], default_font)
+                for i, key in enumerate(context_keys):
+                    cell_ref = f"{col_letter(NULLABLE_START + i)}{row}"
+                    ws[cell_ref] = nullable_data.get(key, False)
+                    self._apply_font_to_cell(ws[cell_ref], default_font)
+            else:
+                for i in range(num_contexts):
+                    cell_ref = f"{col_letter(NULLABLE_START + i)}{row}"
+                    self._apply_font_to_cell(ws[cell_ref], default_font)
 
-            ws[f"K{row}"] = col.description or ""
-            self._apply_font_to_cell(ws[f"K{row}"], default_font)
-            ws[f"L{row}"] = ", ".join(col.sample_values) if col.sample_values else ""
-            self._apply_font_to_cell(ws[f"L{row}"], default_font)
-            ws[f"M{row}"] = col.source or "data"
-            self._apply_font_to_cell(ws[f"M{row}"], default_font)
-            ws[f"N{row}"] = col.key_type or ""
-            self._apply_font_to_cell(ws[f"N{row}"], default_font)
-            ws[f"O{row}"] = col.domain_type or ""
-            self._apply_font_to_cell(ws[f"O{row}"], default_font)
-            ws[f"P{row}"] = col.reporting_requirement or ""
-            self._apply_font_to_cell(ws[f"P{row}"], default_font)
+            ws[f"{col_letter(desc_idx)}{row}"] = col.description or ""
+            self._apply_font_to_cell(ws[f"{col_letter(desc_idx)}{row}"], default_font)
+            ws[f"{col_letter(sample_idx)}{row}"] = (
+                ", ".join(col.sample_values) if col.sample_values else ""
+            )
+            self._apply_font_to_cell(ws[f"{col_letter(sample_idx)}{row}"], default_font)
+            ws[f"{col_letter(source_idx)}{row}"] = col.source or "data"
+            self._apply_font_to_cell(ws[f"{col_letter(source_idx)}{row}"], default_font)
+            ws[f"{col_letter(key_type_idx)}{row}"] = col.key_type or ""
+            self._apply_font_to_cell(ws[f"{col_letter(key_type_idx)}{row}"], default_font)
+            ws[f"{col_letter(domain_type_idx)}{row}"] = col.domain_type or ""
+            self._apply_font_to_cell(ws[f"{col_letter(domain_type_idx)}{row}"], default_font)
+            ws[f"{col_letter(reporting_idx)}{row}"] = col.reporting_requirement or ""
+            self._apply_font_to_cell(ws[f"{col_letter(reporting_idx)}{row}"], default_font)
 
             # Format
-            ws[f"Q{row}"] = col.format or ""
-            self._apply_font_to_cell(ws[f"Q{row}"], default_font)
+            ws[f"{col_letter(format_idx)}{row}"] = col.format or ""
+            self._apply_font_to_cell(ws[f"{col_letter(format_idx)}{row}"], default_font)
 
             # Notes (list[str] -> newline-separated string)
             if col.notes:
-                ws[f"R{row}"] = "\n".join(col.notes)
+                ws[f"{col_letter(notes_idx)}{row}"] = "\n".join(col.notes)
             else:
-                ws[f"R{row}"] = ""
-            self._apply_font_to_cell(ws[f"R{row}"], default_font)
+                ws[f"{col_letter(notes_idx)}{row}"] = ""
+            self._apply_font_to_cell(ws[f"{col_letter(notes_idx)}{row}"], default_font)
 
             row += 1
 
-        # Adjust columns
-        # Widths: Name, Canonical Name, Aliases, Data Type, Length, Precision, Scale,
-        #         Nullable MD/MP/ME, Description, Sample Values, Source, Key Type,
-        #         Domain Type, Reporting Req, Format, Notes, _Validation
-        for i, width in enumerate(
-            [
-                15,
-                18,
-                20,
-                12,
-                10,
-                11,
-                8,
-                12,
-                12,
-                12,
-                20,
-                20,
-                12,
-                18,
-                15,
-                12,
-                15,
-                30,
-                15,
-            ],
-            1,
-        ):
+        # Adjust column widths
+        pre_nullable_widths = [15, 18, 20, 12, 10, 11, 8]
+        nullable_widths = [12] * num_contexts
+        post_nullable_widths = [20, 20, 12, 18, 15, 12, 15, 30, 15]
+        all_widths = pre_nullable_widths + nullable_widths + post_nullable_widths
+        for i, width in enumerate(all_widths, 1):
             ws.column_dimensions[get_column_letter(i)].width = width
 
     def _create_survivorship_sheet(self, umf: UMF) -> None:
@@ -1336,9 +1368,19 @@ class UMFToExcelConverter:
             )
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    def _add_data_validation_to_columns(self, ws: Worksheet) -> None:
-        """Add data validation to columns sheet."""
-        # Data type validation (column D - was B before adding Canonical Name and Aliases)
+    def _add_data_validation_to_columns(
+        self, ws: Worksheet, *, num_contexts: int = 3
+    ) -> None:
+        """Add data validation to columns sheet.
+
+        Args:
+            ws: The worksheet to add validation to.
+            num_contexts: Number of nullable context columns (determines
+                where subsequent columns start).
+        """
+        NULLABLE_START = 7  # 0-based index of first nullable column
+
+        # Data type validation (column D)
         dv_dtype = DataValidation(
             type="list",
             formula1=f'"{",".join(self.constants.DATA_TYPES)}"',
@@ -1349,52 +1391,57 @@ class UMFToExcelConverter:
         dv_dtype.add("D2:D1000")
         ws.add_data_validation(dv_dtype)
 
-        # Nullable MD/MP/ME checkboxes (columns H, I, J - was F, G, H before)
-        # Using TRUE/FALSE list for boolean values
+        # Nullable checkboxes - dynamic number of columns starting at NULLABLE_START
         dv_nullable = DataValidation(
             type="list",
             formula1='"TRUE,FALSE"',
             allow_blank=True,
         )
-        dv_nullable.add("H2:H1000")  # Nullable MD
-        dv_nullable.add("I2:I1000")  # Nullable MP
-        dv_nullable.add("J2:J1000")  # Nullable ME
+        for i in range(num_contexts):
+            col_letter = get_column_letter(NULLABLE_START + i + 1)
+            dv_nullable.add(f"{col_letter}2:{col_letter}1000")
         ws.add_data_validation(dv_nullable)
 
-        # Source validation (column M - was K before)
+        # Post-nullable column positions (0-based)
+        source_col = get_column_letter(NULLABLE_START + num_contexts + 2 + 1)  # +2 for Desc, Sample
+        key_type_col = get_column_letter(NULLABLE_START + num_contexts + 3 + 1)
+        domain_type_col = get_column_letter(NULLABLE_START + num_contexts + 4 + 1)
+
+        # Source validation
         dv_source = DataValidation(
             type="list",
             formula1=f'"{",".join(self.constants.SOURCES)}"',
             allow_blank=True,
         )
-        dv_source.add("M2:M1000")
+        dv_source.add(f"{source_col}2:{source_col}1000")
         ws.add_data_validation(dv_source)
 
-        # Key type validation (column N - was L before)
+        # Key type validation
         dv_keytype = DataValidation(
             type="list",
             formula1=f'"{",".join(self.constants.KEY_TYPES)}"',
             allow_blank=True,
         )
-        dv_keytype.add("N2:N1000")
+        dv_keytype.add(f"{key_type_col}2:{key_type_col}1000")
         ws.add_data_validation(dv_keytype)
 
-        # Domain type validation (column O - was M before)
+        # Domain type validation
         dv_domain = DataValidation(
             type="list",
             formula1=f'"{",".join(self.constants.DOMAIN_TYPES)}"',
             allow_blank=True,
         )
-        dv_domain.add("O2:O1000")
+        dv_domain.add(f"{domain_type_col}2:{domain_type_col}1000")
         ws.add_data_validation(dv_domain)
 
-        # Reporting requirement validation (column P - was N before)
+        # Reporting requirement validation
+        reporting_col = get_column_letter(NULLABLE_START + num_contexts + 5 + 1)
         dv_reporting = DataValidation(
             type="list",
             formula1=f'"{",".join(self.constants.REPORTING_REQUIREMENTS)}"',
             allow_blank=True,
         )
-        dv_reporting.add("P2:P1000")
+        dv_reporting.add(f"{reporting_col}2:{reporting_col}1000")
         ws.add_data_validation(dv_reporting)
 
 
@@ -1498,11 +1545,72 @@ class ExcelToUMFConverter:
 
         return schema
 
+    @staticmethod
+    def _detect_nullable_columns(ws: Worksheet) -> list[tuple[int, str]]:
+        """Detect nullable context columns from the header row.
+
+        Returns a list of (column_index, context_key) tuples for headers
+        matching the pattern "Nullable <KEY>".
+        """
+        nullable_cols: list[tuple[int, str]] = []
+        header_row = list(ws.iter_rows(min_row=1, max_row=1, values_only=True))[0]
+        for idx, header in enumerate(header_row):
+            if header and isinstance(header, str) and header.startswith("Nullable "):
+                context_key = header[len("Nullable "):]
+                nullable_cols.append((idx, context_key))
+        return nullable_cols
+
+    @staticmethod
+    def _build_header_index(
+        header_row: tuple[Any, ...],
+        nullable_indices: set[int],
+    ) -> dict[str, int]:
+        """Build a mapping from lowercase header names to column indices.
+
+        Skips nullable columns (already handled separately).
+        """
+        header_map: dict[str, int] = {}
+        for idx, header in enumerate(header_row):
+            if idx not in nullable_indices and header and isinstance(header, str):
+                header_map[header.lower().strip()] = idx
+        return header_map
+
     def _extract_columns(self, workbook: openpyxl.Workbook) -> list[dict]:
-        """Extract column definitions from Columns sheet."""
+        """Extract column definitions from Columns sheet.
+
+        Detects nullable context columns dynamically from the header row
+        (any column named "Nullable <KEY>"). Post-nullable fields are
+        located by their header names, so the reader handles any number
+        of context columns.
+        """
         from tablespec.type_mappings import map_to_gx_spark_type
 
         ws = workbook[self.constants.SHEET_COLUMNS]
+
+        # Detect nullable columns and build header index
+        nullable_cols = self._detect_nullable_columns(ws)
+        header_row = list(ws.iter_rows(min_row=1, max_row=1, values_only=True))[0]
+        nullable_indices = {idx for idx, _ in nullable_cols}
+        header_map = self._build_header_index(header_row, nullable_indices)
+
+        def _get(row: tuple, idx: int | None) -> Any:
+            """Safely get a cell value by index."""
+            if idx is None or idx >= len(row):
+                return None
+            return row[idx].value
+
+        # Resolve post-nullable column indices by header name
+        desc_idx = header_map.get("description")
+        sample_idx = header_map.get("sample values")
+        source_idx = header_map.get("source")
+        key_type_idx = header_map.get("key type")
+        domain_type_idx = header_map.get("domain type")
+        reporting_idx = header_map.get("reporting req")
+        derived_from_idx = header_map.get("derived from")
+        derivation_mapping_idx = header_map.get("derivation mapping")
+        derivation_expression_idx = header_map.get("derivation expression")
+        format_idx = header_map.get("format")
+        notes_idx = header_map.get("notes")
 
         columns = []
         for row in ws.iter_rows(min_row=2, values_only=False):
@@ -1526,7 +1634,7 @@ class ExcelToUMFConverter:
                 else:
                     col_dict["aliases"] = [a.strip() for a in str(aliases_value).split(",")]
 
-            # Normalize data type: accept both SQL-style (INTEGER, STRING) and SparkSQL (IntegerType, StringType)
+            # Normalize data type
             raw_type = row[3].value if len(row) > 3 else None
             if raw_type and isinstance(raw_type, str):
                 normalized_type = map_to_gx_spark_type(raw_type)
@@ -1550,70 +1658,77 @@ class ExcelToUMFConverter:
                 if isinstance(scale_value, (int, float, str)):
                     col_dict["scale"] = int(scale_value)
 
-            # Nullable - check if any values exist, then initialize all three
-            md_val = row[7].value if len(row) > 7 else None
-            mp_val = row[8].value if len(row) > 8 else None
-            me_val = row[9].value if len(row) > 9 else None
+            # Nullable - read dynamic context columns from detected headers
+            if nullable_cols:
+                nullable_dict: dict[str, bool] = {}
+                any_set = False
+                for col_idx, context_key in nullable_cols:
+                    val = row[col_idx].value if len(row) > col_idx else None
+                    if val is not None:
+                        nullable_dict[context_key] = bool(val)
+                        any_set = True
+                    else:
+                        nullable_dict[context_key] = False
+                if any_set:
+                    col_dict["nullable"] = nullable_dict
 
-            if md_val is not None or mp_val is not None or me_val is not None:
-                col_dict["nullable"] = {
-                    "MD": bool(md_val) if md_val is not None else False,
-                    "MP": bool(mp_val) if mp_val is not None else False,
-                    "ME": bool(me_val) if me_val is not None else False,
-                }
+            # Post-nullable fields resolved by header name
+            desc_val = _get(row, desc_idx)
+            if desc_val:
+                col_dict["description"] = desc_val
 
-            # Description and other fields
-            if len(row) > 10 and row[10].value:
-                col_dict["description"] = row[10].value
-
-            if len(row) > 11 and row[11].value:  # Sample values
-                sample_values_raw = row[11].value
-                if isinstance(sample_values_raw, str):
-                    col_dict["sample_values"] = [s.strip() for s in sample_values_raw.split(",")]
+            sample_val = _get(row, sample_idx)
+            if sample_val:
+                if isinstance(sample_val, str):
+                    col_dict["sample_values"] = [s.strip() for s in sample_val.split(",")]
                 else:
                     col_dict["sample_values"] = [
-                        s.strip() for s in str(sample_values_raw).split(",")
+                        s.strip() for s in str(sample_val).split(",")
                     ]
 
-            if len(row) > 12 and row[12].value:
-                col_dict["source"] = row[12].value
+            source_val = _get(row, source_idx)
+            if source_val:
+                col_dict["source"] = source_val
 
-            if len(row) > 13 and row[13].value:
-                col_dict["key_type"] = row[13].value
+            key_type_val = _get(row, key_type_idx)
+            if key_type_val:
+                col_dict["key_type"] = key_type_val
 
-            if len(row) > 14 and row[14].value:
-                col_dict["domain_type"] = row[14].value
+            domain_type_val = _get(row, domain_type_idx)
+            if domain_type_val:
+                col_dict["domain_type"] = domain_type_val
 
-            if len(row) > 15 and row[15].value:
-                col_dict["reporting_requirement"] = row[15].value
+            reporting_val = _get(row, reporting_idx)
+            if reporting_val:
+                col_dict["reporting_requirement"] = reporting_val
 
-            if len(row) > 16 and row[16].value:
-                col_dict["derived_from"] = row[16].value
+            derived_val = _get(row, derived_from_idx)
+            if derived_val:
+                col_dict["derived_from"] = derived_val
 
             # Derivation Mapping (JSON format)
-            if len(row) > 17 and row[17].value:
-                from contextlib import suppress
-
-                derivation_value = row[17].value
-                if isinstance(derivation_value, str):
-                    with suppress(json.JSONDecodeError, TypeError):
-                        col_dict["derivation_mapping"] = json.loads(derivation_value)
+            derivation_map_val = _get(row, derivation_mapping_idx)
+            if derivation_map_val:
+                if isinstance(derivation_map_val, str):
+                    with contextlib.suppress(json.JSONDecodeError, TypeError):
+                        col_dict["derivation_mapping"] = json.loads(derivation_map_val)
 
             # Derivation Expression
-            if len(row) > 18 and row[18].value:
-                col_dict["derivation_expression"] = row[18].value
+            derivation_expr_val = _get(row, derivation_expression_idx)
+            if derivation_expr_val:
+                col_dict["derivation_expression"] = derivation_expr_val
 
-            # Format (column T = 19)
-            if len(row) > 19 and row[19].value:
-                col_dict["format"] = row[19].value
+            # Format
+            format_val = _get(row, format_idx)
+            if format_val:
+                col_dict["format"] = format_val
 
-            # Notes (column U = 20) - convert newline-separated string to list
-            if len(row) > 20 and row[20].value:
-                notes_value = row[20].value
-                if isinstance(notes_value, str):
-                    # Split by newlines and filter out empty lines
+            # Notes - convert newline-separated string to list
+            notes_val = _get(row, notes_idx)
+            if notes_val:
+                if isinstance(notes_val, str):
                     col_dict["notes"] = [
-                        line.strip() for line in notes_value.split("\n") if line.strip()
+                        line.strip() for line in notes_val.split("\n") if line.strip()
                     ]
 
             columns.append(col_dict)
